@@ -43,6 +43,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework_simplejwt',
+    'django_filters',
+    'social_django',
 
     #Local Apps
     'users'   
@@ -57,6 +59,29 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+# aUTHENTICATION_BACKENDS
+AUTHENTICATION_BACKENDS = (
+    'social_core.backends.microsoft.MicrosoftAzureOAuth2',  # This is the Microsoft backend
+    'django.contrib.auth.backends.ModelBackend',  # Default backend for normal login
+)
+
+SOCIAL_AUTH_MICROSOFT_KEY = os.environ.get('MICROSOFT_KEY')
+SOCIAL_AUTH_MICROSOFT_SECRET = os.environ.get('MICROSOFT_SECRET')
+SOCIAL_AUTH_MICROSOFT_SCOPE = ['email']
+SOCIAL_AUTH_MICROSOFT_EXTRA_DATA = ['email']
+
+# Redirect URLs after successful login
+LOGIN_REDIRECT_URL = '/' 
+LOGOUT_REDIRECT_URL = '/logout'
+
+SOCIAL_AUTH_PIPELINE = (
+    'social_core.pipeline.social_auth.social_user',
+    'social_core.pipeline.social_auth.associate_by_email',
+    'social_core.pipeline.social_auth.load_extra_data',
+    'social_core.pipeline.user.user_details',
+    'users.pipeline.validate_microsoft_email_domain',
+)
 
 ROOT_URLCONF = 'varsigram.urls'
 
