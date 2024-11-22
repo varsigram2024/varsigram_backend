@@ -1,7 +1,10 @@
 from rest_framework import serializers
 from .models import User, Student, Organization
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-
+from django.core.exceptions import ObjectDoesNotExist
+from django.contrib.auth.hashers import make_password
+from django.utils.http import urlsafe_base64_decode
+from rest_framework_simplejwt.tokens import AccessToken
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
@@ -52,13 +55,31 @@ class PasswordResetSerializer(serializers.Serializer):
         return value
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
-    new_password = serializers.CharField(write_only=True)
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, min_length=8)
     confirm_password = serializers.CharField(write_only=True)
 
     def validate(self, data):
+        try:
+            user_id = int(urlsafe_base64_decode(data['uid']).decode())
+            self.user = User.objects.get(id=user_id)
+        except (ValueError, ObjectDoesNotExist):
+            raise serializers.ValidationError("Invalid user ID")
+        
+        try:
+            AccessToken(data['token'])
+        except Exception:
+            raise serializers.ValidationError("Invalid token")
+        
         if data['new_password'] != data['confirm_password']:
             raise serializers.ValidationError("Passwords do not match")
         return data
+    
+    def save(self):
+        self.user.password = make_password(self.validated_data['new_password'])
+        self.user.save()
+
 
 class UserDetailSerializer(serializers.ModelSerializer):
     class Meta:
