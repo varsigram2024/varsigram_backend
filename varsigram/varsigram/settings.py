@@ -71,16 +71,12 @@ SOCIAL_AUTH_MICROSOFT_SECRET = os.environ.get('MICROSOFT_SECRET')
 SOCIAL_AUTH_MICROSOFT_SCOPE = ['email']
 SOCIAL_AUTH_MICROSOFT_EXTRA_DATA = ['email']
 
-# Redirect URLs after successful login
-LOGIN_REDIRECT_URL = '/' 
-LOGOUT_REDIRECT_URL = '/logout'
 
 SOCIAL_AUTH_PIPELINE = (
     'social_core.pipeline.social_auth.social_user',
     'social_core.pipeline.social_auth.associate_by_email',
     'social_core.pipeline.social_auth.load_extra_data',
     'social_core.pipeline.user.user_details',
-    'users.pipeline.validate_microsoft_email_domain',
 )
 
 ROOT_URLCONF = 'varsigram.urls'
@@ -110,7 +106,7 @@ WSGI_APPLICATION = 'varsigram.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': 'db.sqlite3',
     }
 }
 
@@ -172,7 +168,6 @@ EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = ''
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
-DEFAULT_FROM_EMAIL = ''
 EMAIL_USE_SSL = False
 
 # Password validation

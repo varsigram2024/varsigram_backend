@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Student, Organization
+from .models import BaseUser as User, Student, Organization
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.core.exceptions import ObjectDoesNotExist
 from django.contrib.auth.hashers import make_password

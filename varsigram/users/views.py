@@ -5,17 +5,21 @@ from rest_framework import status
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.core.exceptions import ObjectDoesNotExist
+# import requests
+# import os
 
-from varsigram.users.models import User
+from .models import BaseUser as User
 from .serializer import ( 
     StudentRegisterSerializer, OrganizationRegisterSerializer, PasswordResetSerializer, PasswordResetConfirmSerializer, LoginSerializer, ChangePasswordSerializer, StudentUpdateSerializer, OrganizationUpdateSerializer, UserSerializer
 )
 from django.core.mail import send_mail
+# from django.core.exceptions import PermissionDenied, AuthenticationFailed
 from django.conf import settings
-from django.contrib.auth.tokens import PasswordResetTokenGenerator
+# from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework_simplejwt.tokens import RefreshToken
+# import urllib.parse
 
 # Create your views here.
 class UserView(APIView):
@@ -268,5 +272,4 @@ class UserSearchView(APIView):
                     })
 
         return Response(user_data, status=status.HTTP_200_OK)
-
 
