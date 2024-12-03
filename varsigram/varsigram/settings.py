@@ -12,7 +12,7 @@ https://docs.djangoproject.com/en/3.2/ref/settings/
 
 import os
 from pathlib import Path
-from datetime import timedelta
+from datetime import timedelta, datetime
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -42,9 +42,11 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
-    'rest_framework_simplejwt',
+    # 'rest_framework_simplejwt',
+    'rest_framework_jwt',
+    'rest_framework.authtoken',
     'django_filters',
-    'social_django',
+    # 'social_django',
 
     #Local Apps
     'users'   
@@ -60,24 +62,11 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-# aUTHENTICATION_BACKENDS
-AUTHENTICATION_BACKENDS = (
-    'social_core.backends.microsoft.MicrosoftAzureOAuth2',  # This is the Microsoft backend
-    'django.contrib.auth.backends.ModelBackend',  # Default backend for normal login
-)
+# Google OAuth Config
+GOOGLE_OAUTH2_CLIENT_ID = os.environ.get('GOOGLE_OAUTH2_CLIENT_ID')
+GOOGLE_OAUTH2_CLIENT_SECRET = os.environ.get('GOOGLE_OAUTH2_CLIENT_SECRET')
+GOOGLE_OAUTH2_PROJECT_ID = os.environ.get('GOOGLE_OAUTH2_PROJECT_ID')
 
-SOCIAL_AUTH_MICROSOFT_KEY = os.environ.get('MICROSOFT_KEY')
-SOCIAL_AUTH_MICROSOFT_SECRET = os.environ.get('MICROSOFT_SECRET')
-SOCIAL_AUTH_MICROSOFT_SCOPE = ['email']
-SOCIAL_AUTH_MICROSOFT_EXTRA_DATA = ['email']
-
-
-SOCIAL_AUTH_PIPELINE = (
-    'social_core.pipeline.social_auth.social_user',
-    'social_core.pipeline.social_auth.associate_by_email',
-    'social_core.pipeline.social_auth.load_extra_data',
-    'social_core.pipeline.user.user_details',
-)
 
 ROOT_URLCONF = 'varsigram.urls'
 
@@ -122,43 +111,24 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_FILTER_BACKENDS': (
         'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
     ),
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.TokenAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.BasicAuthentication',
+        'rest_framework_jwt.authentication.JSONWebTokenAuthentication',
     ),
 }
 
 #JWT Configuration
-SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=180),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=50),
-    'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': True,
-    'UPDATE_LAST_LOGIN': False,
-
-    'ALGORITHM': 'HS256',
-
-    'VERIFYING_KEY': None,
-    'AUDIENCE': None,
-    'ISSUER': None,
-    'JWK_URL': None,
-    'LEEWAY': 0,
-
-    'AUTH_HEADER_TYPES': ('Bearer',),
-    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
-    'USER_ID_FIELD': 'id',
-    'USER_ID_CLAIM': 'user_id',
-    'USER_AUTHENTICATION_RULE': 'rest_framework_simplejwt.authentication.default_user_authentication_rule',
-
-    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
-    'TOKEN_TYPE_CLAIM': 'token_type',
-    'TOKEN_USER_CLASS': 'rest_framework_simplejwt.models.TokenUser',
-
-    'JTI_CLAIM': 'jti',
-
-    'SLIDING_TOKEN_REFRESH_EXP_CLAIM': 'refresh_exp',
-    'SLIDING_TOKEN_LIFETIME': timedelta(minutes=5),
-    'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
+JWT_AUTH = {
+    'JWT_SECRET_KEY': SECRET_KEY,
+    'JWT_ALGORITHM': 'HS256',
+    'JWT_ALLOW_REFRESH': True,
+    'JWT_EXPIRATION_DELTA': datetime.timedelta(hours=3),
+    'JWT_REFRESH_EXPIRATION_DELTA': datetime.timedelta(days=7),
+    'JWT_AUTH_HEADER_PREFIX': 'Bearer',
 }
 
 #Email Configuration
@@ -188,6 +158,8 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+# Auth Model
+AUTH_USER_MODEL = 'users.User'
 
 # Internationalization
 # https://docs.djangoproject.com/en/3.2/topics/i18n/

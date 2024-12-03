@@ -1,30 +1,33 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status
-from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework_simplejwt.views import TokenObtainPairView
 from django.core.exceptions import ObjectDoesNotExist
+from django.shortcuts import redirect
 # import requests
 # import os
 
-from .models import BaseUser as User
+from .models import User
 from .serializer import ( 
-    StudentRegisterSerializer, OrganizationRegisterSerializer, PasswordResetSerializer, PasswordResetConfirmSerializer, LoginSerializer, ChangePasswordSerializer, StudentUpdateSerializer, OrganizationUpdateSerializer, UserSerializer
+    StudentSerializer, OrganizationSerializer,
+    UserSearchSerializer, UserSerializer, GoogleInputSerializer,
+    PasswordResetConfirmSerializer, PasswordResetSerializer, ChangePasswordSerializer,
 )
 from django.core.mail import send_mail
 # from django.core.exceptions import PermissionDenied, AuthenticationFailed
 from django.conf import settings
 # from django.contrib.auth.tokens import PasswordResetTokenGenerator
-from django.utils.encoding import force_bytes
-from django.utils.http import urlsafe_base64_encode
-from rest_framework_simplejwt.tokens import RefreshToken
+# from django.utils.encoding import force_bytes
+# from django.utils.http import urlsafe_base64_encode
+# from rest_framework_simplejwt.tokens import RefreshToken
+from auth.oauth import (
+    GoogleSdkLoginFlowService,
+)
 # import urllib.parse
 
 # Create your views here.
 class UserView(APIView):
-    permission_classes = [IsAuthenticated, IsAdminUser]
-    authentication_classes = [JWTAuthentication]
+    permission_classes = [AllowAny]
 
     def get(self, request):
         return Response("Hello, World!")
@@ -273,3 +276,57 @@ class UserSearchView(APIView):
 
         return Response(user_data, status=status.HTTP_200_OK)
 
+
+class PublicApi(APIView):
+    authentication_classes = ()
+    permission_classes = ()
+
+
+class GoogleLoginRedirectApi(PublicApi):
+    def get(self, request, *args, **kwargs):
+        google_login_flow = GoogleSdkLoginFlowService()
+
+        authorization_url, state = google_login_flow.get_authorization_url()
+
+        request.session["google_oauth2_state"] = state
+
+        return redirect(authorization_url)
+
+class GoogleLoginApi(PublicApi):
+    def get(self, request, *args, **kwargs):
+        input_serializer = GoogleInputSerializer(data=request.GET)
+        input_serializer.is_valid(raise_exception=True)
+
+        validated_data = input_serializer.validated_data
+
+        code = validated_data.get("code")
+        error = validated_data.get("error")
+        state = validated_data.get("state")
+
+        if error is not None:
+            return Response(
+                {"error": error},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if code is None or state is None:
+            return Response(
+                {"error": "Code and state are required."}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        session_state = request.session.get("google_oauth2_state")
+
+        if session_state is None:
+            return Response(
+                {"error": "CSRF check failed."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        del request.session["google_oauth2_state"]
+
+        if state != session_state:
+            return Response(
+                {"error": "CSRF check failed."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
