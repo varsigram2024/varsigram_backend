@@ -1,9 +1,10 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from rest_framework import status
+from rest_framework import status, generics
 from django.core.exceptions import ObjectDoesNotExist
 from django.shortcuts import redirect
+from rest_framework_jwt.settings import api_settings
 # import requests
 # import os
 
@@ -12,14 +13,12 @@ from .serializer import (
     StudentSerializer, OrganizationSerializer,
     UserSearchSerializer, UserSerializer, GoogleInputSerializer,
     PasswordResetConfirmSerializer, PasswordResetSerializer, ChangePasswordSerializer,
+    RegisterSerializer, LoginSerializer, StudentUpdateSerializer, OrganizationUpdateSerializer
 )
 from django.core.mail import send_mail
+from .utils import generate_jwt_token
 # from django.core.exceptions import PermissionDenied, AuthenticationFailed
 from django.conf import settings
-# from django.contrib.auth.tokens import PasswordResetTokenGenerator
-# from django.utils.encoding import force_bytes
-# from django.utils.http import urlsafe_base64_encode
-# from rest_framework_simplejwt.tokens import RefreshToken
 from auth.oauth import (
     GoogleSdkLoginFlowService,
 )
@@ -32,57 +31,49 @@ class UserView(APIView):
     def get(self, request):
         return Response("Hello, World!")
 
-class StudentRegisterView(APIView):
-    """ Register a new student """
-    permission_classes = []
-    serializer_class = StudentRegisterSerializer
+class RegisterView(generics.GenericAPIView):
+    """ View to register users (students or organizations). """
+    permission_classes = [AllowAny]
+    serializer_class = RegisterSerializer
 
-    def post(self, request):
-        serializer = self.serializer_class(data=request.data)
-        if serializer.is_valid(raise_exception=True):
-            serializer.save()
-            return Response({"message": "Student registered successfully"}, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    def post(self, request, *args, **kwargs):
+        """ Handle the POST request for user registration. """
+        # Validate and create user, student, or organization
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.save()
+            token = serializer.get_token(user)
+            return Response({
+                'message': 'User registered successfully',
+                'token': token
+            }, status=status.HTTP_201_CREATED)
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class OrganizationRegisterView(APIView):
-    """ Register a new organization """
-    permission_classes = [IsAuthenticated]
 
-
-    def post(self, request):
-        # Ensure that only admins can create organizations
-        if not request.user.is_staff:  # or use is_superuser if needed
-            return Response({"error": "You do not have permission to create organizations."}, status=status.HTTP_403_FORBIDDEN)
-
-        # Create the user for the organization
-        user_data = {
-            "email": request.data.get("email"),
-            "password": request.data.get("password"),
-        }
-
-        # Create the User
-        user_serializer = UserSerializer(data=user_data)
-        if user_serializer.is_valid():
-            user = user_serializer.save()
-
-            # Create the organization profile
-            organization_data = {
-                "user": user.id,
-                "organization_name": request.data.get("organization_name"),
-            }
-            org_serializer = OrganizationRegisterSerializer(data=organization_data)
-            if org_serializer.is_valid():
-                org_serializer.save()
-                return Response({"message": "Organization created successfully."}, status=status.HTTP_201_CREATED)
-            else:
-                user.delete()  # Rollback user creation if the org creation fails
-                return Response(org_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        return Response(user_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-class LoginView(TokenObtainPairView):
-    """ Login a user """
-    permission_classes = []
+class LoginView(generics.GenericAPIView):
+    """ View to log in a user and return a JWT token. """
+    permission_classes = [AllowAny]
     serializer_class = LoginSerializer
+
+    def post(self, request, *args, **kwargs):
+        """ Handle POST request for user login. """
+        # Deserialize the data and validate user credentials
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.validated_data['user']
+            # Generate JWT token
+            token = self.get_jwt_token(user)
+            return Response({
+                'message': 'Login successful',
+                'token': token
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def get_jwt_token(self, user):
+        """ Generate a JWT token for the user. """
+        return generate_jwt_token(user)
 
 
 class PasswordResetView(APIView):

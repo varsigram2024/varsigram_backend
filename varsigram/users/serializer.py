@@ -161,6 +161,15 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid credentials or inactive account.")
         data['user'] = user
         return data
+    
+    def get_token(self, obj):
+        """Generate and return JWT token for the user using rest_framework_jwt."""
+        jwt_payload_handler = api_settings.JWT_PAYLOAD_HANDLER
+        jwt_encode_handler = api_settings.JWT_ENCODE_HANDLER
+
+        payload = jwt_payload_handler(obj['user'])
+        token = jwt_encode_handler(payload)
+        return token
 
 class PasswordResetSerializer(serializers.Serializer):
     email = serializers.EmailField()
