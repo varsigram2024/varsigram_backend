@@ -25,28 +25,6 @@ class GoogleAccessTokens:
         decoded_token = jwt.decode(jwt=id_token, options={"verify_signature": False})
         return decoded_token
     
-   
-def google_sdk_login_get_credentials() -> GoogleSdkLoginCredentials:
-    client_id = settings.GOOGLE_OAUTH2_CLIENT_ID
-    client_secret = settings.GOOGLE_OAUTH2_CLIENT_SECRET
-    project_id = settings.GOOGLE_OAUTH2_PROJECT_ID
-
-    if not client_id:
-        raise ImproperlyConfigured("GOOGLE_OAUTH2_CLIENT_ID missing in env.")
-
-    if not client_secret:
-        raise ImproperlyConfigured("GOOGLE_OAUTH2_CLIENT_SECRET missing in env.")
-
-    if not project_id:
-        raise ImproperlyConfigured("GOOGLE_OAUTH2_PROJECT_ID missing in env.")
-
-    credentials = GoogleSdkLoginCredentials(
-        client_id=client_id,
-        client_secret=client_secret, 
-        project_id=project_id
-    )
-
-    return credentials
 
 class GoogleSdkLoginFlowService:
     API_URI = reverse_lazy("api:google-oauth2:login-sdk:callback-sdk")
@@ -128,7 +106,7 @@ class GoogleSdkLoginFlowService:
 
         return google_tokens
     
-    def get_user_info(self, *, google_tokens: GoogleAccessTokens):
+    def get_user_info(self, *, google_tokens: GoogleAccessTokens) -> Dict[str, Any]:
         access_token = google_tokens.access_token
 
         response = requests.get(
@@ -140,3 +118,26 @@ class GoogleSdkLoginFlowService:
             raise ApplicationError("Failed to obtain user info from Google.")
 
         return response.json()
+    
+
+def google_sdk_login_get_credentials() -> GoogleSdkLoginCredentials:
+    client_id = settings.GOOGLE_OAUTH2_CLIENT_ID
+    client_secret = settings.GOOGLE_OAUTH2_CLIENT_SECRET
+    project_id = settings.GOOGLE_OAUTH2_PROJECT_ID
+
+    if not client_id:
+        raise ImproperlyConfigured("GOOGLE_OAUTH2_CLIENT_ID missing in env.")
+
+    if not client_secret:
+        raise ImproperlyConfigured("GOOGLE_OAUTH2_CLIENT_SECRET missing in env.")
+
+    if not project_id:
+        raise ImproperlyConfigured("GOOGLE_OAUTH2_PROJECT_ID missing in env.")
+
+    credentials = GoogleSdkLoginCredentials(
+        client_id=client_id,
+        client_secret=client_secret, 
+        project_id=project_id
+    )
+
+    return credentials

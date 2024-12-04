@@ -348,3 +348,28 @@ class GoogleLoginApi(PublicApi):
                 {"error": "CSRF check failed."},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+        google_login_flow = GoogleSdkLoginFlowService()
+
+        google_tokens = google_login_flow.get_tokens(code=code, state=state)
+
+        id_token_decoded = google_tokens.decode_id_token()
+        user_info = google_login_flow.get_user_info(google_tokens=google_tokens)
+
+        user_email = id_token_decoded["email"]
+        user = User.objects.filter(email=user_email).first()
+
+        if user is None:
+            return Response(
+                {"error": f"User with email {user_email} is not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        login(request, user)
+
+        result = {
+            "id_token_decoded": id_token_decoded,
+            "user_info": user_info,
+        }
+
+        return Response(result)
