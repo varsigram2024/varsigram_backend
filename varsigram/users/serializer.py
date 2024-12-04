@@ -22,11 +22,10 @@ class UserSerializer(serializers.ModelSerializer):
 
 class StudentRegisterSerializer(serializers.ModelSerializer):
     """ Serializer for student objects """
-    user = UserSerializer()
 
     class Meta:
         model = Student
-        fields = ['user', 'name', 'faculty', 'department', 'year', 'religion', 'phone_number', 'sex', 'university']
+        fields = ['name', 'faculty', 'department', 'year', 'religion', 'phone_number', 'sex', 'university']
     
     def create(self, validated_data):
         """ Create a new student """
@@ -73,11 +72,10 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
 
 class OrganizationRegisterSerializer(serializers.ModelSerializer):
     """ Serializer for organization objects (exclusive to admins only)"""
-    user = UserSerializer()
 
     class Meta:
         model = Organization
-        fields = ['user', 'organisation_name']
+        fields = ['organization_name']
     
     def create(self, validated_data):
         """ Create a new organization """
@@ -125,8 +123,8 @@ class OrganizationUpdateSerializer(serializers.ModelSerializer):
 class RegisterSerializer(serializers.ModelSerializer):
     """ Serializer for user registration."""
     password = serializers.CharField(write_only=True)
-    student = StudentRegisterSerializer(required=False)
-    organization = OrganizationRegisterSerializer(required=False)
+    student = StudentRegisterSerializer(required=False, allow_null=True)
+    organization = OrganizationRegisterSerializer(required=False, allow_null=True)
     token = serializers.SerializerMethodField()
 
     class Meta:
@@ -134,42 +132,39 @@ class RegisterSerializer(serializers.ModelSerializer):
         fields = ['email', 'password', 'bio', 'token', 'student', 'organization']
 
     def create(self, validated_data):
-        """Create a user with hashed password and related student or organization."""
+        """Create a User and associated Student or Organization."""
+        student_data = validated_data.pop('student', None)
+        organization_data = validated_data.pop('organization', None)
         password = validated_data.pop('password')
-        user = User.objects.create_user(**validated_data, password=password)
-        
-        # Create the student or organization if provided in the data
-        student_data = validated_data.get('student', None)
-        organization_data = validated_data.get('organization', None)
-        
-        if student_data:
-            # Register user as a student
-            student_serializer = StudentRegisterSerializer(data=student_data)
-            if student_serializer.is_valid():
-                student_serializer.save(user=user)
-            else:
-                user.delete()
-                raise serializers.ValidationError(student_serializer.errors)
-        
-        if organization_data:
-            # Register user as an organization
-            organization_serializer = OrganizationRegisterSerializer(data=organization_data)
-            if organization_serializer.is_valid():
-                organization_serializer.save(user=user)
-            else:
-                user.delete()
-                raise serializers.ValidationError(organization_serializer.errors)
 
+        # Create the user
+        user = User.objects.create(
+            **validated_data,
+            password=make_password(password)
+        )
+
+        # Create related models
+        if student_data:
+            student = Student.objects.create(user=user, **student_data)
+            user.student = student  # Assign the student instance
+        elif organization_data:
+            organization = Organization.objects.create(user=user, **organization_data)
+            user.organization = organization  # Assign the organization instance
+
+        user.save()
         return user
     
     def get_token(self, obj):
         """Generate and return JWT token for the user using rest_framework_jwt."""
-        jwt_payload_handler = api_settings.JWT_PAYLOAD_HANDLER
-        jwt_encode_handler = api_settings.JWT_ENCODE_HANDLER
-
-        payload = jwt_payload_handler(obj)
-        token = jwt_encode_handler(payload)
-        return token
+        return generate_jwt_token(obj)
+    
+    def validate(self, data):
+        """ Custom validation to ensure that only one of `student` or `organization` is provided. """
+        if data.get('student') and data.get('organization'):
+            raise serializers.ValidationError("You cannot register as both a student and an organization.")
+        if not data.get('student') and not data.get('organization'):
+            raise serializers.ValidationError("You must provide either a student or an organization.")
+        return data
     
 
 class LoginSerializer(serializers.Serializer):

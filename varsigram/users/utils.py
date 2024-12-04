@@ -18,3 +18,29 @@ def generate_jwt_token(user):
     jwt_encode_handler = api_settings.JWT_ENCODE_HANDLER
     payload = jwt_payload_handler(user)
     return jwt_encode_handler(payload)
+
+def clean_data(data):
+    """ Converts QueryDict to a dictionary """
+
+    data = data.dict()
+
+    student_data = {}
+    organization_data = {}
+
+    for key, value in data.items():
+        if key.startswith('student.'):
+            student_data[key.replace('student.', '')] = value
+        elif key.startswith('organization.'):
+            organization_data[key.replace('organization.', '')] = value
+    
+    if student_data:
+        data['student'] = student_data
+    else:
+        data['student'] = None
+    
+    if organization_data and organization_data.get('organization_name'):
+        data['organization'] = organization_data
+    else:
+        data['organization'] = None
+
+    return data

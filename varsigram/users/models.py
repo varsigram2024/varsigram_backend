@@ -85,6 +85,11 @@ class Student(models.Model):
         ('Female', 'Female'),
         ('Other', 'Other'),
     ]
+    RELIGION_CHOICES = [
+        ('Christianity', 'Christianity'),
+        ('Islam', 'Islam'),
+        ('Other', 'Other'),
+    ]
     user = models.OneToOneField(User, on_delete=models.PROTECT, related_name='student')
     name = models.CharField(max_length=100)
     faculty = models.CharField(max_length=100)
@@ -92,7 +97,7 @@ class Student(models.Model):
     university = models.CharField(max_length=50)
     year = models.CharField(max_length=20)
     phone_number = models.CharField(max_length=20)
-    religion = models.CharField(max_length=20)
+    religion = models.CharField(max_length=20, choices=RELIGION_CHOICES)
     sex = models.CharField(max_length=20, choices=SEX_CHOICES)
 
     def __str__(self):

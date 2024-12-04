@@ -16,7 +16,7 @@ from .serializer import (
     UserDeactivateSerializer, UserReactivateSerializer
 )
 from django.core.mail import send_mail
-from .utils import generate_jwt_token
+from .utils import generate_jwt_token, clean_data
 # from django.core.exceptions import PermissionDenied, AuthenticationFailed
 from django.conf import settings
 from auth.oauth import (
@@ -41,14 +41,25 @@ class RegisterView(generics.GenericAPIView):
     def post(self, request, *args, **kwargs):
         """ Handle the POST request for user registration. """
         # Validate and create user, student, or organization
-        serializer = self.get_serializer(data=request.data)
-        if serializer.is_valid():
+        data = clean_data(request.data)
+        print(f"Validated Data => {data}")
+        serializer = self.serializer_class(data=data)
+        if serializer.is_valid(raise_exception=True):
+            print("I was valid")
             user = serializer.save()
-            token = serializer.get_token(user)
-            return Response({
-                'message': 'User registered successfully',
-                'token': token
-            }, status=status.HTTP_201_CREATED)
+
+            if user:
+                login(request, user)
+
+                token = serializer.get_token(user)
+                return Response({
+                    'message': 'User registered successfully',
+                    'token': token
+                }, status=status.HTTP_201_CREATED)
+            else:
+                return Response({
+                    'error': 'An error occurred while registering the user.',
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         else:
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
