@@ -4,6 +4,12 @@ from django.contrib.auth import authenticate
 from django.core.exceptions import ObjectDoesNotExist
 from django.contrib.auth.hashers import make_password
 from rest_framework_jwt.settings import api_settings
+from django.core.mail import send_mail
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes
+from django.contrib.sites.shortcuts import get_current_site
+from .utils import generate_jwt_token
+from django.conf import settings
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -38,23 +44,32 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
         model = Student
         fields = ['user', 'name', 'faculty', 'department', 'year', 'religion', 'phone_number', 'sex', 'university']
 
-    
     def update(self, instance, validated_data):
         """Update a student and associated user."""
-        user = self.context['request'].user
+        request_user = self.context['request'].user
 
-        if user.pk != instance.user.pk:
-            raise serializers.ValidationError("You do not have permission to update this student")
-        
+        # Ensure the user is the owner of the student profile
+        if not instance.user == request_user:
+            raise serializers.ValidationError(
+                {"detail": "You do not have permission to update this student."}
+            )
+
+        # Update user fields if provided
         user_data = validated_data.pop('user', None)
         if user_data:
             for attr, value in user_data.items():
-                setattr(instance.user, attr, value)
+                if getattr(instance.user, attr) != value:  # Update only changed fields
+                    setattr(instance.user, attr, value)
             instance.user.save()
+
+        # Update student fields
         for attr, value in validated_data.items():
-            setattr(instance, attr, value)
+            if getattr(instance, attr) != value:  # Update only changed fields
+                setattr(instance, attr, value)
         instance.save()
+
         return instance
+
 
 class OrganizationRegisterSerializer(serializers.ModelSerializer):
     """ Serializer for organization objects (exclusive to admins only)"""
@@ -78,23 +93,32 @@ class OrganizationUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Organization
-        fields = ['user', 'organisation_name']
+        fields = ['user', 'organization_name']
     
     def update(self, instance, validated_data):
         """Update an organization and associated user."""
-        user = self.context['request'].user
+        request_user = self.context['request'].user
 
-        if user.pk != instance.user.pk:
-            raise serializers.ValidationError("You do not have permission to update this organization")
-        
+        # Ensure the user is the owner of the organization profile
+        if not instance.user == request_user:
+            raise serializers.ValidationError(
+                {"detail": "You do not have permission to update this organization."}
+            )
+
+        # Update user fields if provided
         user_data = validated_data.pop('user', None)
         if user_data:
             for attr, value in user_data.items():
-                setattr(instance.user, attr, value)
+                if getattr(instance.user, attr) != value:  # Update only changed fields
+                    setattr(instance.user, attr, value)
             instance.user.save()
+
+        # Update organization fields
         for attr, value in validated_data.items():
-            setattr(instance, attr, value)
+            if getattr(instance, attr) != value:  # Update only changed fields
+                setattr(instance, attr, value)
         instance.save()
+
         return instance
 
 
@@ -175,9 +199,29 @@ class PasswordResetSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
     def validate_email(self, value):
+        """ Check if the user exists """
         if not User.objects.filter(email=value).exists():
             raise serializers.ValidationError("User does not exist")
         return value
+    
+    def save(self, request):
+        """ Generates a reset link and sends an email """
+        email = self.validated_data['email']
+        user = User.objects.get(email=email)
+        token = generate_jwt_token(user)
+        current_site = get_current_site(request)
+        domain = current_site.domain
+        uid = urlsafe_base64_encode(force_bytes(user.id))
+        reset_link = f"http://{domain}/api/v1/auth/password-reset-confirm/{uid}/{token}/"
+
+        send_mail(
+            subject="Password Reset",
+            message=f"Hi {user.email},\n\nClick the link below to reset your password\n{reset_link}",
+            from_email=settings.EMAIL_HOST_USER,
+            recipient_list=[email],
+            fail_silently=False,
+        )
+
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
     uid = serializers.CharField()
@@ -186,40 +230,55 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     confirm_password = serializers.CharField(write_only=True)
 
     def validate(self, data):
+        """ Validates the token and match the passwords. """
         try:
             user_id = int(urlsafe_base64_decode(data['uid']).decode())
             self.user = User.objects.get(id=user_id)
         except (ValueError, ObjectDoesNotExist):
             raise serializers.ValidationError("Invalid user ID")
         
+        # Validate the token
+        jwt_decode_handler = api_settings.JWT_DECODE_HANDLER
         try:
-            AccessToken(data['token'])
+            jwt_decode_handler(data['token'])
         except Exception:
             raise serializers.ValidationError("Invalid token")
         
+        # Check if the passwords match
         if data['new_password'] != data['confirm_password']:
             raise serializers.ValidationError("Passwords do not match")
         return data
     
     def save(self):
+        """ Update the user's password """
         self.user.password = make_password(self.validated_data['new_password'])
         self.user.save()
 
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True)
-    new_password = serializers.CharField(write_only=True)
-    confirm_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True, min_length=8)
 
     def validate(self, data):
+        user = self.context['request'].user
+
+        # Validate old password
+        if not user.check_password(data['old_password']):
+            raise serializers.ValidationError({"old_password": "Old password is incorrect."})
+
+        # Validate new password confirmation
         if data['new_password'] != data['confirm_password']:
-            raise serializers.ValidationError("Passwords do not match")
+            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+
         return data
     
-    def validate_old_password(self, value):
+    def save(self, **kwargs):
+        """Save the new password for the user."""
         user = self.context['request'].user
-        if not user.check_password(value):
-            raise serializers.ValidationError("Old password is incorrect")
-        return value
+        user.password = make_password(self.validated_data['new_password'])
+        user.save()
+        return user
+
 
 class UserSearchSerializer(serializers.Serializer):
     faculty = serializers.CharField(required=False)
@@ -230,3 +289,54 @@ class GoogleInputSerializer(serializers.Serializer):
     error = serializers.CharField(required=False)
     state = serializers.CharField(required=False)
 
+class StudentProfileSerializer(serializers.ModelSerializer):
+    """Serializer for retrieving student profiles."""
+    user = UserSerializer()
+
+    class Meta:
+        model = Student
+        fields = ['user', 'name', 'faculty', 'department', 'year', 'religion', 'phone_number', 'sex', 'university']
+
+class OrganizationProfileSerializer(serializers.ModelSerializer):
+    """Serializer for retrieving organization profiles."""
+    user = UserSerializer()
+
+    class Meta:
+        model = Organization
+        fields = ['user', 'organization_name']
+
+class UserDeactivateSerializer(serializers.Serializer):
+    """ Serializer for deactivating a user account """
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        """ Validate the user's password """
+        user = self.context['request'].user
+        if not user.check_password(data['password']):
+            raise serializers.ValidationError("Invalid password")
+        return data
+    
+    def save(self):
+        """ Deactivate the user account """
+        user = self.context['request'].user
+        user.is_deleted = True
+        user.save()
+        return user
+
+class UserReactivateSerializer(serializers.Serializer):
+    """ Serializer for reactivating a user account """
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        """ Validate the user's password """
+        user = self.context['request'].user
+        if not user.check_password(data['password']):
+            raise serializers.ValidationError("Invalid password")
+        return data
+    
+    def save(self):
+        """ Reactivate the user account """
+        user = self.context['request'].user
+        user.is_deleted = False
+        user.save()
+        return user

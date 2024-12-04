@@ -3,17 +3,17 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status, generics
 from django.core.exceptions import ObjectDoesNotExist
+from rest_framework.exceptions import NotFound
 from django.shortcuts import redirect
 from rest_framework_jwt.settings import api_settings
-# import requests
-# import os
 
-from .models import User
+from .models import User, Student, Organization
 from .serializer import ( 
-    StudentSerializer, OrganizationSerializer,
     UserSearchSerializer, UserSerializer, GoogleInputSerializer,
     PasswordResetConfirmSerializer, PasswordResetSerializer, ChangePasswordSerializer,
-    RegisterSerializer, LoginSerializer, StudentUpdateSerializer, OrganizationUpdateSerializer
+    RegisterSerializer, LoginSerializer, StudentUpdateSerializer, OrganizationUpdateSerializer,
+    OrganizationProfileSerializer, StudentProfileSerializer,
+    UserDeactivateSerializer, UserReactivateSerializer
 )
 from django.core.mail import send_mail
 from .utils import generate_jwt_token
@@ -22,6 +22,8 @@ from django.conf import settings
 from auth.oauth import (
     GoogleSdkLoginFlowService,
 )
+from auth.jwt import JWTAuthentication
+from django.contrib.auth import authenticate, login, logout
 # import urllib.parse
 
 # Create your views here.
@@ -55,6 +57,7 @@ class LoginView(generics.GenericAPIView):
     """ View to log in a user and return a JWT token. """
     permission_classes = [AllowAny]
     serializer_class = LoginSerializer
+    authentication_classes = [JWTAuthentication]
 
     def post(self, request, *args, **kwargs):
         """ Handle POST request for user login. """
@@ -62,6 +65,7 @@ class LoginView(generics.GenericAPIView):
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
             user = serializer.validated_data['user']
+            login(request, user)
             # Generate JWT token
             token = self.get_jwt_token(user)
             return Response({
@@ -75,6 +79,15 @@ class LoginView(generics.GenericAPIView):
         """ Generate a JWT token for the user. """
         return generate_jwt_token(user)
 
+class UserLogout(APIView):
+    """ logout user """
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        logout(request)
+        msg = {'message': 'Logged Out Successfully'}
+        return Response(data=msg, status=status.HTTP_200_OK)
 
 class PasswordResetView(APIView):
     """ Send password reset link to user email """
@@ -84,24 +97,7 @@ class PasswordResetView(APIView):
     def post(self, request):
         serializer = self.serializer_class(data=request.data)
         if serializer.is_valid(raise_exception=True):
-            email = serializer.validated_data['email']
-            user = User.objects.get(email=email)
-
-            # Generate token
-            refresh = RefreshToken.for_user(user)
-            token = str(refresh.access_token)
-            uid = urlsafe_base64_encode(force_bytes(user.pk))
-
-            reset_link = f"{settings.FRONTEND_URL}/reset-password/{uid}/{token}/"
-
-            send_mail(
-                "Password Reset Request",
-                f"Click the link to reset your password: {reset_link}",
-                settings.EMAIL_HOST_USER,
-                [email],
-                fail_silently=False,
-            )
-
+            serializer.save(request=request)
             return Response({"message": "Password reset link sent successfully"}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -122,80 +118,75 @@ class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
-    def post(self, request):
+    def put(self, request, *args, **kwargs):
         serializer = ChangePasswordSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            user = request.user
-            user.set_password(serializer.validated_data['new_password'])
-            user.save()
+            serializer.save()
             return Response({"message": "Password changed successfully!"}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class StudentProfileView(APIView):
-    """ View and update student profile """
+class StudentUpdateView(APIView):
+    """View for updating a student's profile."""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def put(self, request, *args, **kwargs):
+        try:
+            student = Student.objects.get(user=request.user)
+        except Student.DoesNotExist:
+            return Response({"detail": "Student profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = StudentUpdateSerializer(student, data=request.data, context={'request': request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class OrganizationUpdateView(APIView):
+    """View for updating an organization's profile."""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def put(self, request, *args, **kwargs):
+        try:
+            organization = Organization.objects.get(user=request.user)
+        except Organization.DoesNotExist:
+            return Response({"detail": "Organization profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = OrganizationUpdateSerializer(organization, data=request.data, context={'request': request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class UserProfileView(generics.GenericAPIView):
+    """ View for retrieving the current user's profile """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
     def get(self, request):
-        student = request.user.student
-        serializer = StudentUpdateSerializer(student)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-    def put(self, request):
-        student = request.user.student
-        serializer = StudentUpdateSerializer(student, data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response({"message": "Profile updated successfully!"}, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    def patch(self, request):
-        student = request.user.student
-        serializer = StudentUpdateSerializer(student, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response({"message": "Profile updated successfully!"}, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-class OrganizationProfileView(APIView):
-    """ View and update organization profile """
-    permission_classes = [IsAuthenticated]
-    authentication_classes = [JWTAuthentication]
-
-    def get(self, request):
-        organization = request.user.organization
-        serializer = OrganizationUpdateSerializer(organization)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-    def put(self, request):
-        # Ensure the user is an organization (i.e., has an Organization profile)
+        """Retrieve the authenticated user's profile."""
+        user = request.user
         try:
-            organization = request.user.organization
-        except ObjectDoesNotExist:
-            return Response({"error": "You do not have an organization profile."}, status=status.HTTP_404_NOT_FOUND)
+            if hasattr(user, 'student'):
+                serializer = StudentProfileSerializer(user.student)
+                profile_type = "student"
+            elif hasattr(user, 'organization'):
+                serializer = OrganizationProfileSerializer(user.organization)
+                profile_type = "organization"
+            else:
+                raise NotFound("Profile not found for the current user.")
 
-        # Update the organization profile using the serializer
-        serializer = OrganizationUpdateSerializer(organization, data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response({"message": "Organization profile updated successfully."}, status=status.HTTP_200_OK)
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
-    def patch(self, request):
-        # Ensures the user is an organization
-        try:
-            organization = request.user.organization
-        except ObjectDoesNotExist:
-            return Response({"error": "You do not have an organization profile."}, status=status.HTTP_404_NOT_FOUND)
-
-        # Updates the organization profile using the serializer
-        serializer = OrganizationUpdateSerializer(organization, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response({"message": "Organization profile updated successfully."}, status=status.HTTP_200_OK)
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {
+                    "profile_type": profile_type,
+                    "profile": serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+        except NotFound as e:
+            raise e
 
 class UserSearchView(APIView):
     permission_classes = [IsAuthenticated]
@@ -227,7 +218,6 @@ class UserSearchView(APIView):
                         'faculty': student.faculty,
                         'department': student.department,
                         'name': student.name,
-                        'matric_number': student.matric_number,
                     })
 
         # If searching for Organizations:
@@ -256,7 +246,6 @@ class UserSearchView(APIView):
                         'faculty': student.faculty,
                         'department': student.department,
                         'name': student.name,
-                        'matric_number': student.matric_number,
                     })
                 elif hasattr(user, 'organization'):
                     organization = user.organization
@@ -267,6 +256,44 @@ class UserSearchView(APIView):
 
         return Response(user_data, status=status.HTTP_200_OK)
 
+class UserDeactivateView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request):
+        serializer = UserDeactivateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+
+        user = request.user
+        user.delete()
+        return Response(
+            {"message": "Account deactivated successfully"},
+            status=status.HTTP_200_OK
+        )
+
+class UserReactivateView(APIView):
+    """ Reactivate a user account """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request):
+        serializer = UserReactivateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+        
+        if not user.is_deleted:
+            return Response(
+                {"message": "Account is already active"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        user.restore()
+        return Response(
+            {"message": "Account reactivated successfully"},
+            status=status.HTTP_200_OK
+        )
 
 class PublicApi(APIView):
     authentication_classes = ()
