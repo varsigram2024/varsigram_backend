@@ -279,7 +279,7 @@ class UserSearchSerializer(serializers.Serializer):
     faculty = serializers.CharField(required=False)
     department = serializers.CharField(required=False)
 
-class GoogleInputSerializer(serializers.Serializer):
+# class GoogleInputSerializer(serializers.Serializer):
     code = serializers.CharField(required=False)
     error = serializers.CharField(required=False)
     state = serializers.CharField(required=False)

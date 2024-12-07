@@ -2,14 +2,14 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status, generics
-from django.core.exceptions import ObjectDoesNotExist
+# from django.core.exceptions import ObjectDoesNotExist
 from rest_framework.exceptions import NotFound
-from django.shortcuts import redirect
-from rest_framework_jwt.settings import api_settings
+# from django.shortcuts import redirect
+# from rest_framework_jwt.settings import api_settings
 
 from .models import User, Student, Organization
 from .serializer import ( 
-    UserSearchSerializer, UserSerializer, GoogleInputSerializer,
+    # UserSearchSerializer, UserSerializer, GoogleInputSerializer,
     PasswordResetConfirmSerializer, PasswordResetSerializer, ChangePasswordSerializer,
     RegisterSerializer, LoginSerializer, StudentUpdateSerializer, OrganizationUpdateSerializer,
     OrganizationProfileSerializer, StudentProfileSerializer,
@@ -19,9 +19,9 @@ from django.core.mail import send_mail
 from .utils import generate_jwt_token, clean_data
 # from django.core.exceptions import PermissionDenied, AuthenticationFailed
 from django.conf import settings
-from auth.oauth import (
-    GoogleSdkLoginFlowService,
-)
+# from auth.oauth import (
+#     GoogleSdkLoginFlowService,
+# )
 from auth.jwt import JWTAuthentication
 from django.contrib.auth import authenticate, login, logout
 # import urllib.parse
@@ -306,81 +306,81 @@ class UserReactivateView(APIView):
             status=status.HTTP_200_OK
         )
 
-class PublicApi(APIView):
-    authentication_classes = ()
-    permission_classes = ()
+# class PublicApi(APIView):
+#     authentication_classes = ()
+#     permission_classes = ()
 
 
-class GoogleLoginRedirectApi(PublicApi):
-    def get(self, request, *args, **kwargs):
-        google_login_flow = GoogleSdkLoginFlowService()
+# class GoogleLoginRedirectApi(PublicApi):
+#     def get(self, request, *args, **kwargs):
+#         google_login_flow = GoogleSdkLoginFlowService()
 
-        authorization_url, state = google_login_flow.get_authorization_url()
+#         authorization_url, state = google_login_flow.get_authorization_url()
 
-        request.session["google_oauth2_state"] = state
+#         request.session["google_oauth2_state"] = state
 
-        return redirect(authorization_url)
+#         return redirect(authorization_url)
 
-class GoogleLoginApi(PublicApi):
-    def get(self, request, *args, **kwargs):
-        input_serializer = GoogleInputSerializer(data=request.GET)
-        input_serializer.is_valid(raise_exception=True)
+# class GoogleLoginApi(PublicApi):
+#     def get(self, request, *args, **kwargs):
+#         input_serializer = GoogleInputSerializer(data=request.GET)
+#         input_serializer.is_valid(raise_exception=True)
 
-        validated_data = input_serializer.validated_data
+#         validated_data = input_serializer.validated_data
 
-        code = validated_data.get("code")
-        error = validated_data.get("error")
-        state = validated_data.get("state")
+#         code = validated_data.get("code")
+#         error = validated_data.get("error")
+#         state = validated_data.get("state")
 
-        if error is not None:
-            return Response(
-                {"error": error},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+#         if error is not None:
+#             return Response(
+#                 {"error": error},
+#                 status=status.HTTP_400_BAD_REQUEST
+#             )
 
-        if code is None or state is None:
-            return Response(
-                {"error": "Code and state are required."}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
+#         if code is None or state is None:
+#             return Response(
+#                 {"error": "Code and state are required."}, 
+#                 status=status.HTTP_400_BAD_REQUEST
+#             )
 
-        session_state = request.session.get("google_oauth2_state")
+#         session_state = request.session.get("google_oauth2_state")
 
-        if session_state is None:
-            return Response(
-                {"error": "CSRF check failed."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+#         if session_state is None:
+#             return Response(
+#                 {"error": "CSRF check failed."},
+#                 status=status.HTTP_400_BAD_REQUEST
+#             )
 
-        del request.session["google_oauth2_state"]
+#         del request.session["google_oauth2_state"]
 
-        if state != session_state:
-            return Response(
-                {"error": "CSRF check failed."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+#         if state != session_state:
+#             return Response(
+#                 {"error": "CSRF check failed."},
+#                 status=status.HTTP_400_BAD_REQUEST
+#             )
         
-        google_login_flow = GoogleSdkLoginFlowService()
+#         google_login_flow = GoogleSdkLoginFlowService()
 
-        google_tokens = google_login_flow.get_tokens(code=code, state=state)
+#         google_tokens = google_login_flow.get_tokens(code=code, state=state)
 
-        id_token_decoded = google_tokens.decode_id_token()
-        user_info = google_login_flow.get_user_info(google_tokens=google_tokens)
+#         id_token_decoded = google_tokens.decode_id_token()
+#         user_info = google_login_flow.get_user_info(google_tokens=google_tokens)
 
-        user_email = id_token_decoded["email"]
-        user = User.objects.filter(email=user_email).first()
+#         user_email = id_token_decoded["email"]
+#         user = User.objects.filter(email=user_email).first()
 
-        if user is None:
-            return Response(
-                {"error": f"User with email {user_email} is not found."},
-                status=status.HTTP_404_NOT_FOUND
-            )
+#         if user is None:
+#             return Response(
+#                 {"error": f"User with email {user_email} is not found."},
+#                 status=status.HTTP_404_NOT_FOUND
+#             )
 
-        login(request, user)
+#         login(request, user)
 
-        result = {
-            "id_token_decoded": id_token_decoded,
-            "user_info": user_info,
-        }
+#         result = {
+#             "id_token_decoded": id_token_decoded,
+#             "user_info": user_info,
+#         }
 
-        return Response(result)
+#         return Response(result)
