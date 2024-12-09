@@ -5,6 +5,7 @@ from django.contrib.auth.models import (
 from django.db import models
 from django.utils import timezone
 from uuid import uuid4
+import random
 from django.core.exceptions import ValidationError
 
 class UserManager(BaseUserManager):
@@ -45,21 +46,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     # profile_picture = models.ImageField(upload_to='profile_pictures/', blank=True, null=True)
     is_staff = models.BooleanField(default=False)
     is_deleted = models.BooleanField(default=False)
-
-    # groups = models.ManyToManyField(
-    #     'auth.Group',
-    #     related_name='baseuser_set',  # Add this line
-    #     blank=True,
-    #     help_text='The groups this user belongs to.',
-    #     verbose_name='groups',
-    # )
-    # user_permissions = models.ManyToManyField(
-    #     'auth.Permission',
-    #     related_name='baseuser_set',  # Add this line
-    #     blank=True,
-    #     help_text='Specific permissions for this user.',
-    #     verbose_name='user permissions',
-    # )
+    is_verified = models.BooleanField(default=False)
+    otp = models.CharField(max_length=6, blank=True, null=True)
+    otp_expiry = models.DateTimeField(blank=True, null=True)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username', 'password']
@@ -76,6 +65,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     def restore(self):
         """ Restore the user """
         self.is_deleted = False
+        self.save()
+    
+    def generate_otp(self):
+        """ Generate OTP and set the expiry time """
+        self.otp = f"{random.randint(100000, 999999)}"
+        self.otp_expiry = timezone.now() + timezone.timedelta(minutes=10)
         self.save()
 
 class Student(models.Model):

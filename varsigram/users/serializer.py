@@ -10,6 +10,8 @@ from django.utils.encoding import force_bytes
 from django.contrib.sites.shortcuts import get_current_site
 from .utils import generate_jwt_token
 from django.conf import settings
+import random
+from django.utils.timezone import now
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -335,3 +337,31 @@ class UserReactivateSerializer(serializers.Serializer):
         user.is_deleted = False
         user.save()
         return user
+
+class OTPVerificationSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    otp = serializers.CharField(max_length=6)
+
+    def validate(self, data):
+        try:
+            user = User.objects.get(email=data['email'])
+        except User.DoesNotExist:
+            raise serializers.ValidationError("User with this email does not exist.")
+
+        if user.otp != data['otp']:
+            raise serializers.ValidationError("Invalid OTP.")
+        
+        if user.otp_expiration < now():
+            raise serializers.ValidationError("OTP has expired.")
+
+        return data
+
+class SendOTPSerializer(serializers.Serializer):
+    """Serializer for sending OTP to the authenticated user's email."""
+    def validate(self, data):
+        """Ensure the authenticated user has a valid email."""
+        user = self.context['request'].user
+        if not user.email:
+            raise serializers.ValidationError("User does not have a valid email.")
+        return data
+

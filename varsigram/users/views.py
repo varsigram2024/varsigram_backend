@@ -4,16 +4,14 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status, generics
 # from django.core.exceptions import ObjectDoesNotExist
 from rest_framework.exceptions import NotFound
-# from django.shortcuts import redirect
-# from rest_framework_jwt.settings import api_settings
-
 from .models import User, Student, Organization
 from .serializer import ( 
     # UserSearchSerializer, UserSerializer, GoogleInputSerializer,
     PasswordResetConfirmSerializer, PasswordResetSerializer, ChangePasswordSerializer,
     RegisterSerializer, LoginSerializer, StudentUpdateSerializer, OrganizationUpdateSerializer,
     OrganizationProfileSerializer, StudentProfileSerializer,
-    UserDeactivateSerializer, UserReactivateSerializer
+    UserDeactivateSerializer, UserReactivateSerializer,
+    OTPVerificationSerializer, SendOTPSerializer
 )
 from django.core.mail import send_mail
 from .utils import generate_jwt_token, clean_data
@@ -24,7 +22,9 @@ from django.conf import settings
 # )
 from auth.jwt import JWTAuthentication
 from django.contrib.auth import authenticate, login, logout
+from .tasks import send_otp_email
 # import urllib.parse
+
 
 # Create your views here.
 class UserView(APIView):
@@ -305,6 +305,39 @@ class UserReactivateView(APIView):
             {"message": "Account reactivated successfully"},
             status=status.HTTP_200_OK
         )
+
+class SendOTPView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        """ Handles OTP sending for authenticated user. """
+        serializer = SendOTPSerializer(data=request.data, context={'request': request})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        user = request.user
+        user.generate_otp()
+        
+        # Send OTP via Celery task
+        send_otp_email.delay(user.email, user.otp)
+        
+        return Response({"message": "OTP sent successfully."}, status=status.HTTP_200_OK)
+
+class VerifyOTPView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = OTPVerificationSerializer(data=request.data)
+        if serializer.is_valid():
+            # Mark user as verified
+            user = User.objects.get(email=request.data['email'])
+            user.otp = None  # Clear OTP after successful verification
+            user.otp_expiration = None
+            user.is_verified = True  # Verifies the user
+            user.save()
+            return Response({"message": "OTP verified successfully."}, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 # class PublicApi(APIView):
 #     authentication_classes = ()
