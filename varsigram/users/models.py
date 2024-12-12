@@ -75,25 +75,25 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 class Student(models.Model):
     """ Model for Student related to User """
-    SEX_CHOICES = [
-        ('Male', 'Male'),
-        ('Female', 'Female'),
-        ('Other', 'Other'),
-    ]
-    RELIGION_CHOICES = [
-        ('Christianity', 'Christianity'),
-        ('Islam', 'Islam'),
-        ('Other', 'Other'),
-    ]
+    # SEX_CHOICES = [
+    #     ('Male', 'Male'),
+    #     ('Female', 'Female'),
+    #     ('Other', 'Other'),
+    # ]
+    # RELIGION_CHOICES = [
+    #     ('Christianity', 'Christianity'),
+    #     ('Islam', 'Islam'),
+    #     ('Other', 'Other'),
+    # ]
     user = models.OneToOneField(User, on_delete=models.PROTECT, related_name='student')
     name = models.CharField(max_length=100)
     faculty = models.CharField(max_length=100)
     department = models.CharField(max_length=100)
-    university = models.CharField(max_length=50)
+    university = models.CharField(max_length=100)
     year = models.CharField(max_length=20)
     phone_number = models.CharField(max_length=20)
-    religion = models.CharField(max_length=20, choices=RELIGION_CHOICES)
-    sex = models.CharField(max_length=20, choices=SEX_CHOICES)
+    religion = models.CharField(max_length=20)
+    sex = models.CharField(max_length=20)
 
     def __str__(self):
         return f"{self.user.email} (Student)"

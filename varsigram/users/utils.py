@@ -33,7 +33,7 @@ def clean_data(data):
         elif key.startswith('organization.'):
             organization_data[key.replace('organization.', '')] = value
     
-    if student_data:
+    if student_data and student_data.get('name'):
         data['student'] = student_data
     else:
         data['student'] = None

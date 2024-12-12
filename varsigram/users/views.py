@@ -4,6 +4,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status, generics
 # from django.core.exceptions import ObjectDoesNotExist
 from rest_framework.exceptions import NotFound
+from rest_framework_jwt.settings import api_settings
 from .models import User, Student, Organization
 from .serializer import ( 
     # UserSearchSerializer, UserSerializer, GoogleInputSerializer,
@@ -15,6 +16,7 @@ from .serializer import (
 )
 from django.core.mail import send_mail
 from .utils import generate_jwt_token, clean_data
+from django.utils.http import urlsafe_base64_decode
 # from django.core.exceptions import PermissionDenied, AuthenticationFailed
 from django.conf import settings
 # from auth.oauth import (
@@ -42,10 +44,10 @@ class RegisterView(generics.GenericAPIView):
         """ Handle the POST request for user registration. """
         # Validate and create user, student, or organization
         data = clean_data(request.data)
-        print(f"Validated Data => {data}")
+        # print(f"Validated Data => {data}")
         serializer = self.serializer_class(data=data)
-        if serializer.is_valid(raise_exception=True):
-            print("I was valid")
+        if serializer.is_valid():
+            # print("I was valid")
             user = serializer.save()
 
             if user:
@@ -61,6 +63,7 @@ class RegisterView(generics.GenericAPIView):
                     'error': 'An error occurred while registering the user.',
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         else:
+            print(f"Serializer => {serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -100,7 +103,7 @@ class UserLogout(APIView):
         msg = {'message': 'Logged Out Successfully'}
         return Response(data=msg, status=status.HTTP_200_OK)
 
-class PasswordResetView(APIView):
+class PasswordResetView(generics.GenericAPIView):
     """ Send password reset link to user email """
     permission_classes = []
     serializer_class = PasswordResetSerializer
@@ -112,19 +115,40 @@ class PasswordResetView(APIView):
             return Response({"message": "Password reset link sent successfully"}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class PasswordResetConfirmView(APIView):
+class PasswordResetConfirmView(generics.GenericAPIView):
     """ Reset user password """
     permission_classes = []
     serializer_class = PasswordResetConfirmSerializer
 
-    def post(self, request):
-        serializer = self.serializer_class(data=request.data)
+    def get(self, request, *args, **kwargs):
+        uidb64 = request.GET.get('uid')
+        token = request.GET.get('token')
+
+        user_id = int(urlsafe_base64_decode(uidb64).decode())
+        user = User.objects.get(id=user_id)
+
+        if not user:
+            return Response({"error": "Invalid User ID"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        jwt_decode_handler = api_settings.JWT_DECODE_HANDLER
+        try:
+            jwt_decode_handler(token)
+        except Exception:
+            return Response({"error": "Invalid Token"},status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({"message": "Validation Successful"}, status=status.HTTP_200_OK)
+
+    def post(self, request, *args, **kwargs):
+        uidb64 = request.GET.get('uid')
+        user_id = int(urlsafe_base64_decode(uidb64).decode())
+        user = User.objects.get(id=user_id)
+
+        serializer = self.serializer_class(data=request.data, context={'user': user})
         if serializer.is_valid(raise_exception=True):
             serializer.save()
             return Response({"message": "Password reset successful"}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class ChangePasswordView(APIView):
+class ChangePasswordView(generics.GenericAPIView):
     """ Change user password """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
@@ -136,7 +160,7 @@ class ChangePasswordView(APIView):
             return Response({"message": "Password changed successfully!"}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class StudentUpdateView(APIView):
+class StudentUpdateView(generics.GenericAPIView):
     """View for updating a student's profile."""
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
@@ -154,7 +178,7 @@ class StudentUpdateView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class OrganizationUpdateView(APIView):
+class OrganizationUpdateView(generics.GenericAPIView):
     """View for updating an organization's profile."""
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
@@ -199,7 +223,7 @@ class UserProfileView(generics.GenericAPIView):
         except NotFound as e:
             raise e
 
-class UserSearchView(APIView):
+class UserSearchView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -267,7 +291,7 @@ class UserSearchView(APIView):
 
         return Response(user_data, status=status.HTTP_200_OK)
 
-class UserDeactivateView(APIView):
+class UserDeactivateView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
@@ -283,7 +307,7 @@ class UserDeactivateView(APIView):
             status=status.HTTP_200_OK
         )
 
-class UserReactivateView(APIView):
+class UserReactivateView(generics.GenericAPIView):
     """ Reactivate a user account """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
@@ -306,7 +330,7 @@ class UserReactivateView(APIView):
             status=status.HTTP_200_OK
         )
 
-class SendOTPView(APIView):
+class SendOTPView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -323,14 +347,15 @@ class SendOTPView(APIView):
         
         return Response({"message": "OTP sent successfully."}, status=status.HTTP_200_OK)
 
-class VerifyOTPView(APIView):
-    permission_classes = [AllowAny]
+class VerifyOTPView(generics.GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = OTPVerificationSerializer
 
     def post(self, request):
-        serializer = OTPVerificationSerializer(data=request.data)
+        serializer = self.serializer_class(data=request.data, context={'request': request})
         if serializer.is_valid():
             # Mark user as verified
-            user = User.objects.get(email=request.data['email'])
+            user = request.user
             user.otp = None  # Clear OTP after successful verification
             user.otp_expiration = None
             user.is_verified = True  # Verifies the user

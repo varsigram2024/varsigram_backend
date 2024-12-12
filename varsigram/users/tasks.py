@@ -11,3 +11,14 @@ def send_otp_email(email, otp):
 
     send_mail(subject, message, from_email, recipient_list)
     return f"OTP email sent to {email}"
+
+@shared_task
+def send_reset_email(email, reset_link):
+    """ Sends Reset Link email asynchronously."""
+    subject = "Password Reset"
+    message = f"Hi User,\n\nClick the link below to reset your password\n{reset_link}"
+    from_email = "noreply@varsigram.org"
+    recipient_list = [email]
+
+    send_mail(subject=subject, message=message, from_email=from_email, recipient_list=recipient_list)
+    return f"Reset Link sent to {email}"

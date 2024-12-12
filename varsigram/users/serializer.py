@@ -12,6 +12,7 @@ from .utils import generate_jwt_token
 from django.conf import settings
 import random
 from django.utils.timezone import now
+from .tasks import send_reset_email
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -132,12 +133,24 @@ class RegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['email', 'password', 'bio', 'token', 'student', 'organization']
-
+    
+    def validate(self, data):
+        """ Custom validation to ensure that only one of `student` or `organization` is provided. """
+        # print("i was called")
+        if data.get('student') and data.get('organization'):
+            raise serializers.ValidationError("You cannot register as both a student and an organization.")
+        if not data.get('student') and not data.get('organization'):
+            raise serializers.ValidationError("You must provide either a student or an organization.")
+        return data
+    
     def create(self, validated_data):
         """Create a User and associated Student or Organization."""
+        # print("Was I here???")
         student_data = validated_data.pop('student', None)
         organization_data = validated_data.pop('organization', None)
         password = validated_data.pop('password')
+
+        # print(f"Validated data: {validated_data} === Student data: {student_data}")
 
         # Create the user
         user = User.objects.create(
@@ -149,7 +162,8 @@ class RegisterSerializer(serializers.ModelSerializer):
         if student_data:
             student = Student.objects.create(user=user, **student_data)
             user.student = student  # Assign the student instance
-        elif organization_data:
+        
+        if organization_data:
             organization = Organization.objects.create(user=user, **organization_data)
             user.organization = organization  # Assign the organization instance
 
@@ -159,14 +173,7 @@ class RegisterSerializer(serializers.ModelSerializer):
     def get_token(self, obj):
         """Generate and return JWT token for the user using rest_framework_jwt."""
         return generate_jwt_token(obj)
-    
-    def validate(self, data):
-        """ Custom validation to ensure that only one of `student` or `organization` is provided. """
-        if data.get('student') and data.get('organization'):
-            raise serializers.ValidationError("You cannot register as both a student and an organization.")
-        if not data.get('student') and not data.get('organization'):
-            raise serializers.ValidationError("You must provide either a student or an organization.")
-        return data
+
     
 
 class LoginSerializer(serializers.Serializer):
@@ -209,38 +216,21 @@ class PasswordResetSerializer(serializers.Serializer):
         current_site = get_current_site(request)
         domain = current_site.domain
         uid = urlsafe_base64_encode(force_bytes(user.id))
-        reset_link = f"http://{domain}/api/v1/auth/password-reset-confirm/{uid}/{token}/"
+        reset_link = f"http://{domain}/api/v1/password-reset-confirm/?uid={uid}&token={token}"
 
-        send_mail(
-            subject="Password Reset",
-            message=f"Hi {user.email},\n\nClick the link below to reset your password\n{reset_link}",
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[email],
-            fail_silently=False,
-        )
+        send_reset_email.delay(email, reset_link)
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
-    uid = serializers.CharField()
-    token = serializers.CharField()
     new_password = serializers.CharField(write_only=True, min_length=8)
     confirm_password = serializers.CharField(write_only=True)
 
     def validate(self, data):
         """ Validates the token and match the passwords. """
-        try:
-            user_id = int(urlsafe_base64_decode(data['uid']).decode())
-            self.user = User.objects.get(id=user_id)
-        except (ValueError, ObjectDoesNotExist):
-            raise serializers.ValidationError("Invalid user ID")
         
-        # Validate the token
-        jwt_decode_handler = api_settings.JWT_DECODE_HANDLER
-        try:
-            jwt_decode_handler(data['token'])
-        except Exception:
-            raise serializers.ValidationError("Invalid token")
-        
+        user = self.context['user']
+        self.user = user
+
         # Check if the passwords match
         if data['new_password'] != data['confirm_password']:
             raise serializers.ValidationError("Passwords do not match")
@@ -339,19 +329,19 @@ class UserReactivateSerializer(serializers.Serializer):
         return user
 
 class OTPVerificationSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    # email = serializers.EmailField()
     otp = serializers.CharField(max_length=6)
 
     def validate(self, data):
         try:
-            user = User.objects.get(email=data['email'])
+            user = self.context['request'].user
         except User.DoesNotExist:
             raise serializers.ValidationError("User with this email does not exist.")
 
         if user.otp != data['otp']:
             raise serializers.ValidationError("Invalid OTP.")
         
-        if user.otp_expiration < now():
+        if user.otp_expiry < now():
             raise serializers.ValidationError("OTP has expired.")
 
         return data
