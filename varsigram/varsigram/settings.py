@@ -53,7 +53,8 @@ INSTALLED_APPS = [
     # 'social_django',
 
     #Local Apps
-    'users'   
+    'users',
+    'chat'
 ]
 
 MIDDLEWARE = [

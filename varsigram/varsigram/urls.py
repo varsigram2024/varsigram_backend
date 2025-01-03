@@ -16,6 +16,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from users import urls as users_urls
+from chat import urls as chat_urls
 # from users.views import (
     # GoogleLoginApi,
     # GoogleLoginRedirectApi,
@@ -25,6 +26,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api-auth/', include('rest_framework.urls')),
     path('api/v1/', include(users_urls)),
+    path('api/v1/', include(chat_urls)),
     # path('callback/', GoogleLoginApi.as_view(), name='callback-sdk'),
     # path('redirect/', GoogleLoginRedirectApi.as_view(), name='redirect-sdk'),
 ]
