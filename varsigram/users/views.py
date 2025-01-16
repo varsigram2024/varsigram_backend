@@ -363,6 +363,14 @@ class VerifyOTPView(generics.GenericAPIView):
             return Response({"message": "OTP verified successfully."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+class CheckUserVerification(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if user.is_verified:
+            return Response({"message": "User is verified."}, status=status.HTTP_200_OK)
+        return Response({"message": "User is not verified."}, status=status.HTTP_400_BAD_REQUEST)
 
 # class PublicApi(APIView):
 #     authentication_classes = ()

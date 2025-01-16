@@ -6,7 +6,8 @@ from .views import (
     UserSearchView, UserLogout,
     StudentUpdateView, OrganizationUpdateView,
     UserDeactivateView, UserReactivateView,
-    VerifyOTPView, SendOTPView
+    VerifyOTPView, SendOTPView,
+    CheckUserVerification,
 )
 
 urlpatterns = [
@@ -25,4 +26,5 @@ urlpatterns = [
     path('reactivate/', UserReactivateView.as_view(), name='user-reactivate'),
     path('send-otp/', SendOTPView.as_view(), name='send-otp'),
     path('verify-otp/', VerifyOTPView.as_view(), name='verify-otp'),
+    path('check-verification/', CheckUserVerification.as_view(), name='check-verification'),
 ]
