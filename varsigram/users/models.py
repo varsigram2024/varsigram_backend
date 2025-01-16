@@ -41,6 +41,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     """ Base User Model """
     email = models.EmailField(unique=True)
     password = models.CharField(max_length=150)
+    username = models.CharField(max_length=150, unique=True)
     bio = models.TextField(blank=True, null=True)
     date_joined = models.DateTimeField(default=timezone.now)
     # profile_picture = models.ImageField(upload_to='profile_pictures/', blank=True, null=True)
@@ -96,7 +97,7 @@ class Student(models.Model):
     sex = models.CharField(max_length=20)
 
     def __str__(self):
-        return f"{self.user.email} (Student)"
+        return f"{self.user.username} (Student)"
     
     def save(self, *args, **kwargs):
         """ Validate that a user cannot be both a student and an organization"""
@@ -111,7 +112,7 @@ class Organization(models.Model):
     organization_name = models.CharField(max_length=100)
 
     def __str__(self):
-        return f"{self.user.email} (Organization)"
+        return f"{self.user.username} (Organization)"
     
     def save(self, *args, **kwargs):
         """ Validate that a user cannot be both a student and an organization"""

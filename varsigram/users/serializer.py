@@ -19,7 +19,7 @@ class UserSerializer(serializers.ModelSerializer):
     """ Serializer for user objects """
     class Meta:
         model = User
-        fields = ['id', 'email', 'bio', 'is_staff', 'is_deleted']
+        fields = ['id', 'email', 'username', 'bio', 'is_staff', 'is_deleted']
         read_only_fields = ['is_staff', 'is_deleted']
 
 
@@ -132,7 +132,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['email', 'password', 'bio', 'token', 'student', 'organization']
+        fields = ['email', 'username', 'password', 'bio', 'token', 'student', 'organization']
     
     def validate(self, data):
         """ Custom validation to ensure that only one of `student` or `organization` is provided. """
