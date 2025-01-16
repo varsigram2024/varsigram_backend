@@ -54,7 +54,8 @@ INSTALLED_APPS = [
 
     #Local Apps
     'users',
-    'chat'
+    'chat',
+    'postMang',
 ]
 
 MIDDLEWARE = [
