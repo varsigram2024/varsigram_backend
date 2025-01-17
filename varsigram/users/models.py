@@ -51,12 +51,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     otp = models.CharField(max_length=6, blank=True, null=True)
     otp_expiry = models.DateTimeField(blank=True, null=True)
 
-    USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['username', 'password']
+    USERNAME_FIELD = 'username'
+    REQUIRED_FIELDS = ['email', 'password']
     objects = UserManager()
 
     def __str__(self):
-        return self.email
+        return self.username
     
     def delete(self, using=None, keep_parents=False):
         """ Soft delete the user """

@@ -68,6 +68,9 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+SECURE_BROWSER_XSS_FILTER = True # Enable XSS Filter in browsers
+X_FRAME_OPTIONS = 'DENY' # Prevent Clickjacking
+
 # Google OAuth Config
 GOOGLE_OAUTH2_CLIENT_ID = os.environ.get('GOOGLE_OAUTH2_CLIENT_ID')
 GOOGLE_OAUTH2_CLIENT_SECRET = os.environ.get('GOOGLE_OAUTH2_CLIENT_SECRET')
