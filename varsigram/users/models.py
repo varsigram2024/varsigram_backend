@@ -41,7 +41,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     """ Base User Model """
     email = models.EmailField(unique=True)
     password = models.CharField(max_length=150)
-    username = models.CharField(max_length=150, unique=True)
+    username = models.CharField(max_length=150, unique=True, default='default_username')
     bio = models.TextField(blank=True, null=True)
     date_joined = models.DateTimeField(default=timezone.now)
     # profile_picture = models.ImageField(upload_to='profile_pictures/', blank=True, null=True)
@@ -51,8 +51,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     otp = models.CharField(max_length=6, blank=True, null=True)
     otp_expiry = models.DateTimeField(blank=True, null=True)
 
-    USERNAME_FIELD = 'username'
-    REQUIRED_FIELDS = ['email', 'password']
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['username', 'password']
     objects = UserManager()
 
     def __str__(self):

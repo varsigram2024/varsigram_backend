@@ -129,7 +129,7 @@ class PostSearchView(generics.ListAPIView):
 
 class TrendingPostsView(generics.ListAPIView):
     """ List trending posts """
-    queryset = Post.objects.annotate(like_count=Count('like')).order_by('-like_count', '-created_at')
+    queryset = Post.objects.annotate(like_count=Count('likes')).order_by('-like_count', '-created_at')
     serializer_class = PostSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
@@ -151,7 +151,7 @@ class FollowOrganizationView(generics.CreateAPIView):
         try:
             organization = User.objects.get(username=organization_username, organization__isnull=False)
             student = Student.objects.get(user=self.request.user)
-            if Follow.objects.filter(student=student, organization=organization).exists():
+            if Follow.objects.filter(student=self.request.user, organization=organization).exists():
                 return Response({"message": "You are already following this organization."}, status=status.HTTP_400_BAD_REQUEST)
 
             serializer.save(student=self.request.user, organization=organization)
@@ -217,7 +217,8 @@ class FeedView(generics.ListAPIView):
             department = student.department
             faculty = student.faculty
             religion = student.religion
-            following_organizations = Follow.objects.filter(student=student).values_list('organization', flat=True)
+            # print("I passed here!")
+            following_organizations = Follow.objects.filter(student=user).values_list('organization', flat=True)
             post_queryset = Post.objects.filter(Q(user__in=following_organizations) | Q(user__student=student) | Q(user__student__department=department) | Q(user__student__faculty=faculty) | Q(user__student__religion=religion))
             share_queryset = Share.objects.filter(user=user) if shared else Share.objects.none()
 
