@@ -3,9 +3,10 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from django.db.models import Exists, OuterRef, Count, Q
+from django.http import Http404
 
 from .models import ( Post, Comment, Like, Share,
-                     User, Follow, Student)
+                     User, Follow, Student, Organization)
 from .serializer import PostSerializer, CommentSerializer, LikeSerializer, ShareSerializer, FollowSerializer
 from .utils import IsOwnerOrReadOnly
 from itertools import chain
@@ -85,17 +86,27 @@ class SharePostView(generics.CreateAPIView):
         serializer.save(user=self.request.user, post=post)
 
 class UserPostsView(generics.ListAPIView):
-    """ List all posts by a user """
     serializer_class = PostSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
     def get_queryset(self):
-        username = self.kwargs['username']  # Get username from URL
-        user = get_object_or_404(User, username=username)  # Retrieve the user
+        display_name_slug = self.kwargs['display_name_slug']
+
+        try:
+            student = Student.objects.get(display_name_slug=display_name_slug)
+            user = student.user
+        except Student.DoesNotExist:
+            try:
+                organization = Organization.objects.get(display_name_slug=display_name_slug)
+                user = organization.user
+            except Organization.DoesNotExist:
+                raise Http404
+
         if self.request.user.is_authenticated:
             return Post.objects.filter(user=user).annotate(
                 has_liked=Exists(Like.objects.filter(post=OuterRef('pk'), user=self.request.user))
             ).order_by('-created_at')
+
         return Post.objects.filter(user=user).order_by('-created_at')
 
 class PostUpdateView(generics.UpdateAPIView):

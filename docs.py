@@ -46,7 +46,7 @@
 
 # api/v1/ posts/<slug:slug>/share/ [name='post-share'] : This endpoint is used to share the post.
 
-# api/v1/ users/<str:username>/posts/ [name='user-posts'] : This endpoint is used to view the user's posts.
+# api/v1/ users/<slug:display_name_slug>/posts/ [name='user-posts'] : This endpoint is used to view the user's posts.
 
 # api/v1/ posts/<slug:slug>/edit/ [name='post-edit'] : This endpoint is used to edit the post.
 

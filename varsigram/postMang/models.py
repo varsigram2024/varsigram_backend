@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils.text import slugify
+from django.utils import timezone
 from users.models import Student, Organization
 
 User = get_user_model()
@@ -15,11 +16,15 @@ class Post(models.Model):
     
     def save(self, *args, **kwargs):
         if not self.slug:
-            self.slug = slugify(f"{self.user.username}-{self.created_at}")
+            base_slug = slugify(self.content[:50]) #Slugify content
+            timestamp = timezone.now().strftime("%Y%m%d%H%M%S")
+            unique_slug = f"{base_slug}-{timestamp}"
+            self.slug = unique_slug
+
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.user.username}: {self.content[:30]}"
+        return f"{self.user}: {self.content[:30]}"
 
 class Like(models.Model):
     """ Model to represent the likes on the post """
@@ -41,7 +46,7 @@ class Share(models.Model):
     shared_at = models.DateTimeField(auto_now_add=True)#
 
     def __str__(self):
-        return f"{self.user.username} shared {self.post.user.username}'s post"
+        return f"{self.user} shared {self.post.user}'s post"
 
 class Follow(models.Model):
     """ Model to represent the following relationship between student and organization """

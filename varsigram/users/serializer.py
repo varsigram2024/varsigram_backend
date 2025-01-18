@@ -17,10 +17,15 @@ from .tasks import send_reset_email
 
 class UserSerializer(serializers.ModelSerializer):
     """ Serializer for user objects """
+    display_name = serializers.SerializerMethodField()
     class Meta:
         model = User
-        fields = ['id', 'email', 'username', 'bio', 'is_staff', 'is_deleted']
+        fields = ['id', 'email', 'display_name', 'bio', 'is_staff', 'is_deleted']
         read_only_fields = ['is_staff', 'is_deleted']
+    
+    def get_display_name(self, obj):
+        """ Get the display name for the user """
+        return str(obj)
 
 
 class StudentRegisterSerializer(serializers.ModelSerializer):
