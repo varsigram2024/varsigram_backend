@@ -50,8 +50,8 @@ class Share(models.Model):
 
 class Follow(models.Model):
     """ Model to represent the following relationship between student and organization """
-    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='following')
-    organization = models.ForeignKey(User, on_delete=models.CASCADE, related_name='followers')
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='following')
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='followers')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

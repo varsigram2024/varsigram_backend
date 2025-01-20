@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import Post, Comment, Like, Share, Follow
-from users.serializer import UserSerializer
+from users.serializer import UserSerializer, OrganizationProfileSerializer, StudentProfileSerializer
 
 class PostSerializer(serializers.ModelSerializer):
     user = serializers.ReadOnlyField(source='user.username')
@@ -40,7 +40,19 @@ class ShareSerializer(serializers.ModelSerializer):
         fields = ('id', 'user', 'post', 'shared_at')
 
 class FollowSerializer(serializers.ModelSerializer):
+    organization = OrganizationProfileSerializer(read_only=True)
+    student = StudentProfileSerializer(read_only=True)
+
     class Meta:
         model = Follow
-        fields = ('id', 'organization', 'created_at')
+        fields = ('id', 'organization', 'student', 'created_at')
         read_only_fields = ('created_at',)
+
+class FollowingSerializer(serializers.ModelSerializer):
+    organization = OrganizationProfileSerializer(read_only=True)
+
+    class Meta:
+        model = Follow
+        fields = ('organization', 'created_at')
+        read_only_fields = ('created_at',)
+

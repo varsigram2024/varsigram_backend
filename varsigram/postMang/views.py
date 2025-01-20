@@ -7,7 +7,7 @@ from django.http import Http404
 
 from .models import ( Post, Comment, Like, Share,
                      User, Follow, Student, Organization)
-from .serializer import PostSerializer, CommentSerializer, LikeSerializer, ShareSerializer, FollowSerializer
+from .serializer import PostSerializer, CommentSerializer, LikeSerializer, ShareSerializer, FollowSerializer, FollowingSerializer
 from .utils import IsOwnerOrReadOnly
 from itertools import chain
 
@@ -152,26 +152,25 @@ class TrendingPostsView(generics.ListAPIView):
         return super().get_queryset().order_by('-like_count', '-created_at')
 
 class FollowOrganizationView(generics.CreateAPIView):
-    """ Follow an organization """
-    queryset = Follow.objects.all()
     serializer_class = FollowSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def perform_create(self, serializer):
-        organization_username = self.kwargs['username']
+        organization_display_name = self.kwargs['display_name_slug']
         try:
-            organization = User.objects.get(username=organization_username, organization__isnull=False)
+            organization = Organization.objects.get(display_name_slug=organization_display_name)
             student = Student.objects.get(user=self.request.user)
-            if Follow.objects.filter(student=self.request.user, organization=organization).exists():
+
+            if Follow.objects.filter(student=student, organization=organization).exists():
                 return Response({"message": "You are already following this organization."}, status=status.HTTP_400_BAD_REQUEST)
 
-            serializer.save(student=self.request.user, organization=organization)
+            serializer.save(student=student, organization=organization)
+            return Response({"message": "Following successful!"}, status=status.HTTP_201_CREATED)
 
-        except User.DoesNotExist:
+        except Organization.DoesNotExist:
             return Response({"message": "Organization not found."}, status=status.HTTP_404_NOT_FOUND)
         except Student.DoesNotExist:
             return Response({"message": "Only students can follow organizations."}, status=status.HTTP_400_BAD_REQUEST)
-
 
 class UnfollowOrganizationView(generics.DestroyAPIView):
     """ Unfollow an organization """
@@ -179,11 +178,12 @@ class UnfollowOrganizationView(generics.DestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
-        organization_username = self.kwargs['username']
+        organization_display_name_slug = self.kwargs['display_name_slug']
         try:
-            organization = User.objects.get(username=organization_username, organization__isnull=False)
-            return Follow.objects.get(student=self.request.user, organization=organization)
-        except User.DoesNotExist:
+            organization = Organization.objects.get(display_name_slug=organization_display_name_slug)
+            student = Student.objects.get(user=self.request.user)
+            return Follow.objects.get(student=student, organization=organization)
+        except Organization.DoesNotExist:
             return None
         except Follow.DoesNotExist:
             return None
@@ -191,12 +191,15 @@ class UnfollowOrganizationView(generics.DestroyAPIView):
 
 class FollowingOrganizationsView(generics.ListAPIView):
     """ List organizations followed by a student """
-    serializer_class = FollowSerializer
+    serializer_class = FollowingSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        user = self.request.user
-        return Follow.objects.filter(student=user)
+        try:
+            student = Student.objects.get(user=self.request.user)
+            return Follow.objects.filter(student=student)
+        except Student.DoesNotExist:
+            return Follow.objects.none()
 
 class OrganizationFollowersView(generics.ListAPIView):
     """ List followers of an organization """
@@ -204,11 +207,11 @@ class OrganizationFollowersView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
     def get_queryset(self):
-        username = self.kwargs['username']
+        organization_display_name_slug = self.kwargs['display_name_slug']
         try:
-            organization = User.objects.get(username=username, organization__isnull=False)
+            organization = Organization.objects.get(display_name_slug=organization_display_name_slug)
             return Follow.objects.filter(organization=organization)
-        except User.DoesNotExist:
+        except Organization.DoesNotExist:
             return Follow.objects.none()
 
 class FeedView(generics.ListAPIView):
@@ -222,15 +225,29 @@ class FeedView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        shared = self.request.query_params.get('shared', None)  
+        shared = self.request.query_params.get('shared', None)
+
         try:
             student = Student.objects.get(user=user)
+            following_organizations = Follow.objects.filter(student=student).values_list('organization__user', flat=True)
             department = student.department
             faculty = student.faculty
             religion = student.religion
-            # print("I passed here!")
-            following_organizations = Follow.objects.filter(student=user).values_list('organization', flat=True)
-            post_queryset = Post.objects.filter(Q(user__in=following_organizations) | Q(user__student=student) | Q(user__student__department=department) | Q(user__student__faculty=faculty) | Q(user__student__religion=religion))
+
+            # Pre-query for followed organizations (assuming Follow model has a student field)
+            # followed_user_pks = Follow.objects.filter(student=student).values_list('user__pk', flat=True)
+
+            # Combine filters into a single Q object
+            combined_filter = Q(user__in=following_organizations)
+            if department:
+                combined_filter |= Q(user__student__department=department)
+            if faculty:
+                combined_filter |= Q(user__student__faculty=faculty)
+            if religion:
+                combined_filter |= Q(user__student__religion=religion)
+            
+
+            post_queryset = Post.objects.filter(combined_filter)
             share_queryset = Share.objects.filter(user=user) if shared else Share.objects.none()
 
             queryset = sorted(
@@ -249,6 +266,5 @@ class FeedView(generics.ListAPIView):
                 else:
                     annotated_queryset.append(item)
             return annotated_queryset
-
+        
         return queryset
-

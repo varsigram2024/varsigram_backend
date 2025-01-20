@@ -20,8 +20,8 @@ class UserSerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField()
     class Meta:
         model = User
-        fields = ['id', 'email', 'display_name', 'bio', 'is_staff', 'is_deleted']
-        read_only_fields = ['is_staff', 'is_deleted']
+        fields = ['id', 'email', 'display_name', 'bio', 'is_deleted', 'is_verified']
+        read_only_fields = ['id', 'is_deleted', 'is_verified']
     
     def get_display_name(self, obj):
         """ Get the display name for the user """
@@ -137,7 +137,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['email', 'username', 'password', 'bio', 'token', 'student', 'organization']
+        fields = ['email', 'password', 'bio', 'token', 'student', 'organization']
     
     def validate(self, data):
         """ Custom validation to ensure that only one of `student` or `organization` is provided. """
@@ -276,10 +276,10 @@ class UserSearchSerializer(serializers.Serializer):
     faculty = serializers.CharField(required=False)
     department = serializers.CharField(required=False)
 
-# class GoogleInputSerializer(serializers.Serializer):
-    code = serializers.CharField(required=False)
-    error = serializers.CharField(required=False)
-    state = serializers.CharField(required=False)
+# # class GoogleInputSerializer(serializers.Serializer):
+#     code = serializers.CharField(required=False)
+#     error = serializers.CharField(required=False)
+#     state = serializers.CharField(required=False)
 
 class StudentProfileSerializer(serializers.ModelSerializer):
     """Serializer for retrieving student profiles."""
@@ -287,7 +287,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Student
-        fields = ['user', 'name', 'faculty', 'department', 'year', 'religion', 'phone_number', 'sex', 'university']
+        fields = ['user', 'name', 'display_name_slug','faculty', 'department', 'year', 'religion', 'phone_number', 'sex', 'university']
 
 class OrganizationProfileSerializer(serializers.ModelSerializer):
     """Serializer for retrieving organization profiles."""
@@ -295,7 +295,7 @@ class OrganizationProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Organization
-        fields = ['user', 'organization_name']
+        fields = ['user', 'organization_name', 'display_name_slug']
 
 class UserDeactivateSerializer(serializers.Serializer):
     """ Serializer for deactivating a user account """
