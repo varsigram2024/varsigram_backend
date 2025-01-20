@@ -58,10 +58,10 @@
 
 # api/v1/ trending/ [name='trending-posts'] : This endpoint is used to view the trending posts.
 
-# api/v1/ organizations/<slug:display_name_slug>/follow/ [name='follow-organization'] :This endpoint is used to follow the organization.
+# api/v1/ users/<slug:display_name_slug>/follow/ [name='follow-organization'] :This endpoint is used to follow the organization.
 
-# api/v1/ organizations/<slug:display_name_slug>/unfollow/ [name='unfollow-organization'] : This endpoint is used to unfollow the organization.
+# api/v1/ users/<slug:display_name_slug>/unfollow/ [name='unfollow-organization'] : This endpoint is used to unfollow the organization.
 
-# api/v1/ organizations/<slug:display_name_slug>/followers/ [name='organization-followers'] : This endpoint is used to view the organization's followers.
+# api/v1/ users/<slug:display_name_slug>/followers/ [name='organization-followers'] : This endpoint is used to view the organization's followers.
 
 # api/v1/ following/ [name='following-organizations'] : This endpoint is used to view the following organizations.
