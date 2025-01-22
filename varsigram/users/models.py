@@ -111,6 +111,7 @@ class Student(models.Model):
     phone_number = models.CharField(max_length=20)
     religion = models.CharField(max_length=20)
     sex = models.CharField(max_length=20)
+    date_of_birth = models.DateField(null=True, blank=True)
     display_name_slug = models.SlugField(unique=True, blank=True, null=True)
 
     def __str__(self):

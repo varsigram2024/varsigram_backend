@@ -33,7 +33,7 @@ class StudentRegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Student
-        fields = ['name', 'faculty', 'department', 'year', 'religion', 'phone_number', 'sex', 'university']
+        fields = ['name', 'faculty', 'department', 'year', 'religion', 'phone_number', 'sex', 'university', 'date_of_birth']
     
     def create(self, validated_data):
         """ Create a new student """
@@ -287,7 +287,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Student
-        fields = ['user', 'name', 'display_name_slug','faculty', 'department', 'year', 'religion', 'phone_number', 'sex', 'university']
+        fields = ['user', 'name', 'display_name_slug','faculty', 'department', 'year', 'religion', 'phone_number', 'sex', 'university', 'date_of_birth']
 
 class OrganizationProfileSerializer(serializers.ModelSerializer):
     """Serializer for retrieving organization profiles."""

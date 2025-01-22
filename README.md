@@ -47,7 +47,8 @@ Most endpoints require authentication. Authentication is handled using token-bas
                 "religion": "",
                 "phone_number": "",
                 "sex": "",
-                "university": ""
+                "university": "",
+                "date_of_birth": null
             },
             "organization": {
                 "organization_name": ""
