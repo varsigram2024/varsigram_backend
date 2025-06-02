@@ -54,7 +54,8 @@ INSTALLED_APPS = [
 
     #Local Apps
     'users',
-    'chat'
+    'chat',
+    'postMang',
 ]
 
 MIDDLEWARE = [
@@ -66,6 +67,9 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+SECURE_BROWSER_XSS_FILTER = True # Enable XSS Filter in browsers
+X_FRAME_OPTIONS = 'DENY' # Prevent Clickjacking
 
 # Google OAuth Config
 GOOGLE_OAUTH2_CLIENT_ID = os.environ.get('GOOGLE_OAUTH2_CLIENT_ID')

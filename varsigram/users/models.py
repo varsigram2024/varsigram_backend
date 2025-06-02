@@ -41,6 +41,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     """ Base User Model """
     email = models.EmailField(unique=True)
     password = models.CharField(max_length=150)
+    # username = models.CharField(max_length=150, unique=True, default='default_username')
     bio = models.TextField(blank=True, null=True)
     date_joined = models.DateTimeField(default=timezone.now)
     # profile_picture = models.ImageField(upload_to='profile_pictures/', blank=True, null=True)
@@ -51,11 +52,27 @@ class User(AbstractBaseUser, PermissionsMixin):
     otp_expiry = models.DateTimeField(blank=True, null=True)
 
     USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['username', 'password']
+    REQUIRED_FIELDS = ['password']
     objects = UserManager()
 
     def __str__(self):
-        return self.email
+        try:
+            return self.student.name
+        except Student.DoesNotExist:
+            try:
+                return self.organization.organization_name
+            except Organization.DoesNotExist:
+                return self.email
+    
+    def get_display_name(self):
+        """ Returns the name of the user """
+        try:
+            return self.student.name
+        except Student.DoesNotExist:
+            try:
+                return self.organization.organization_name
+            except Organization.DoesNotExist:
+                return self.email
     
     def delete(self, using=None, keep_parents=False):
         """ Soft delete the user """
@@ -94,6 +111,8 @@ class Student(models.Model):
     phone_number = models.CharField(max_length=20)
     religion = models.CharField(max_length=20)
     sex = models.CharField(max_length=20)
+    date_of_birth = models.DateField(null=True, blank=True)
+    display_name_slug = models.SlugField(unique=True, blank=True, null=True)
 
     def __str__(self):
         return f"{self.user.email} (Student)"
@@ -109,6 +128,7 @@ class Organization(models.Model):
     """ Model for Organization related to User """
     user = models.OneToOneField(User, on_delete=models.PROTECT, related_name='organization')
     organization_name = models.CharField(max_length=100)
+    display_name_slug = models.SlugField(unique=True, blank=True, null=True)
 
     def __str__(self):
         return f"{self.user.email} (Organization)"

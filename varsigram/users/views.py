@@ -224,6 +224,7 @@ class UserProfileView(generics.GenericAPIView):
             raise e
 
 class UserSearchView(generics.GenericAPIView):
+    """ View for searching users """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -292,6 +293,7 @@ class UserSearchView(generics.GenericAPIView):
         return Response(user_data, status=status.HTTP_200_OK)
 
 class UserDeactivateView(generics.GenericAPIView):
+    """ Deactivate a user account """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
@@ -331,6 +333,7 @@ class UserReactivateView(generics.GenericAPIView):
         )
 
 class SendOTPView(generics.GenericAPIView):
+    """ Send OTP to user email """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -348,6 +351,7 @@ class SendOTPView(generics.GenericAPIView):
         return Response({"message": "OTP sent successfully."}, status=status.HTTP_200_OK)
 
 class VerifyOTPView(generics.GenericAPIView):
+    """ Verify OTP for user """
     permission_classes = [IsAuthenticated]
     serializer_class = OTPVerificationSerializer
 
@@ -363,6 +367,15 @@ class VerifyOTPView(generics.GenericAPIView):
             return Response({"message": "OTP verified successfully."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+class CheckUserVerification(APIView):
+    """ Check if the user is verified """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if user.is_verified:
+            return Response({"message": "User is verified."}, status=status.HTTP_200_OK)
+        return Response({"message": "User is not verified."}, status=status.HTTP_400_BAD_REQUEST)
 
 # class PublicApi(APIView):
 #     authentication_classes = ()
