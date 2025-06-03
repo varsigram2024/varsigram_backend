@@ -10,137 +10,9 @@ from firebase_admin import firestore
 from postMang.apps import db  # Import the Firestore client from the app config
 from .models import ( Post, Comment, Like, Share,
                      User, Follow, Student, Organization)
-from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, FirestoreShareCreateInputSerializer, FirestoreShareOutputSerializer, FollowingSerializer, FollowSerializer
+from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, FollowingSerializer, FollowSerializer
 from .utils import IsOwnerOrReadOnly
 from itertools import chain
-
-
-
-# class PostListCreateView(generics.ListCreateAPIView):
-#     """ Create a new post or list all posts """
-#     queryset = Post.objects.all().order_by('-created_at')
-#     serializer_class = PostSerializer
-#     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-
-#     def perform_create(self, serializer):
-#         serializer.save(user=self.request.user)
-
-
-# class PostDetailView(generics.RetrieveAPIView):
-#     """ Retrieve a single post """
-#     queryset = Post.objects.all()
-#     serializer_class = PostSerializer
-#     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-#     lookup_field = 'slug'
-
-#     def get_queryset(self):
-#         user = self.request.user
-#         if user.is_authenticated:
-#             return Post.objects.annotate(
-#                 has_liked=Exists(Like.objects.filter(post=OuterRef('pk'), user=user))
-#             )
-#         return super().get_queryset()
-
-
-# class CommentCreateView(generics.CreateAPIView):
-#     """ Create a new comment """
-#     queryset = Comment.objects.all()
-#     serializer_class = CommentSerializer
-#     permission_classes = [permissions.IsAuthenticated]
-
-#     def perform_create(self, serializer):
-#         post = get_object_or_404(Post, slug=self.kwargs['slug'])
-#         serializer.save(user=self.request.user, post=post)
-
-
-# class LikeCreateDestroyView(generics.GenericAPIView):
-#     """ Like or unlike a post """
-#     queryset = Like.objects.all()
-#     serializer_class = LikeSerializer
-#     permission_classes = [permissions.IsAuthenticated]
-
-#     def post(self, request, slug):
-#         post = get_object_or_404(Post, slug=slug)
-#         like, created = Like.objects.get_or_create(user=request.user, post=post)
-#         if created:
-#             return Response({"message": "Post liked successfully."}, status=status.HTTP_201_CREATED)
-#         return Response({"message": "You have already liked this post."}, status=status.HTTP_400_BAD_REQUEST)
-
-#     def delete(self, request, slug):
-#         post = get_object_or_404(Post, slug=slug)
-#         try:
-#             like = Like.objects.get(user=request.user, post=post)
-#             like.delete()
-#             return Response({"message": "Post unliked successfully."}, status=status.HTTP_204_NO_CONTENT)
-#         except Like.DoesNotExist:
-#             return Response({"message": "You have not liked this post."}, status=status.HTTP_400_BAD_REQUEST)
-
-# class SharePostView(generics.CreateAPIView):
-#     queryset = Share.objects.all()
-#     serializer_class = ShareSerializer
-#     permission_classes = [permissions.IsAuthenticated]
-
-#     def perform_create(self, serializer):
-#         post_slug = self.kwargs['slug']
-#         post = get_object_or_404(Post, slug=post_slug)
-
-#         if Share.objects.filter(user=self.request.user, post=post).exists():
-#             return Response({"message": "You have already shared this post."}, status=status.HTTP_400_BAD_REQUEST)
-
-#         serializer.save(user=self.request.user, post=post)
-
-# class UserPostsView(generics.ListAPIView):
-#     serializer_class = PostSerializer
-#     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-
-#     def get_queryset(self):
-#         display_name_slug = self.kwargs['display_name_slug']
-
-#         try:
-#             student = Student.objects.get(display_name_slug=display_name_slug)
-#             user = student.user
-#         except Student.DoesNotExist:
-#             try:
-#                 organization = Organization.objects.get(display_name_slug=display_name_slug)
-#                 user = organization.user
-#             except Organization.DoesNotExist:
-#                 raise Http404
-
-#         if self.request.user.is_authenticated:
-#             return Post.objects.filter(user=user).annotate(
-#                 has_liked=Exists(Like.objects.filter(post=OuterRef('pk'), user=self.request.user))
-#             ).order_by('-created_at')
-
-#         return Post.objects.filter(user=user).order_by('-created_at')
-
-# class PostUpdateView(generics.UpdateAPIView):
-#     """ Update a post """
-#     queryset = Post.objects.all()
-#     serializer_class = PostSerializer
-#     permission_classes = [permissions.IsAuthenticated, IsOwnerOrReadOnly]
-#     lookup_field = 'slug'
-
-# class PostDeleteView(generics.DestroyAPIView):
-#     """ Delete a post """
-#     queryset = Post.objects.all()
-#     serializer_class = PostSerializer
-#     permission_classes = [permissions.IsAuthenticated, IsOwnerOrReadOnly]
-#     lookup_field = 'slug'
-
-# class PostSearchView(generics.ListAPIView):
-#     """ Search for posts """
-#     queryset = Post.objects.all()
-#     serializer_class = PostSerializer
-#     filter_backends = [filters.SearchFilter]
-#     search_fields = ['content'] # fields to search
-#     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-
-#     def get_queryset(self):
-#         if self.request.user.is_authenticated:
-#             return super().get_queryset().annotate(
-#                 has_liked=Exists(Like.objects.filter(post=OuterRef('pk'), user=self.request.user))
-#             ).order_by('-created_at')
-#         return super().get_queryset().order_by('-created_at')
 
 # class TrendingPostsView(generics.ListAPIView):
 #     """ List trending posts """
@@ -445,40 +317,77 @@ class PostDetailFirestoreView(APIView):
 ##
 class CommentCreateFirestoreView(APIView):
     """
-    Create a new comment for a post in Firestore.
+    Create a new comment for a post in Firestore using a transactional decorator.
     URL: /api/posts/{post_id}/comments/
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, post_id): # Get post_id from URL
+        user_id = str(request.user.id) # Ensure user ID is a string for Firestore
+
+        # 1. Initial Post Existence Check (outside transaction for quick feedback)
         post_ref = db.collection('posts').document(post_id)
-        post_doc = post_ref.get()
-        if not post_doc.exists:
+        post_doc_snapshot = post_ref.get() # Get a snapshot for initial check
+        if not post_doc_snapshot.exists:
             return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
 
         serializer = FirestoreCommentSerializer(data=request.data)
         if serializer.is_valid():
             data = serializer.validated_data
-            try:
-                comment_payload = {
-                    'post_id': post_id,
-                    'author_id': str(request.user.id),
-                    'author_username': request.user.email,
-                    'text': data['text'],
-                    'timestamp': firestore.SERVER_TIMESTAMP
-                }
-                # Add comment to the subcollection
-                update_time, comment_ref = post_ref.collection('comments').add(comment_payload)
-                
-                # Increment comment_count on the post document
-                post_ref.update({'comment_count': firestore.Increment(1)})
+            
+            comment_payload = {
+                'post_id': post_id, # Redundant if in subcollection, but useful for queries
+                'author_id': user_id,
+                'author_username': request.user.email, # Denormalize for convenience
+                'text': data['text'],
+                'timestamp': firestore.SERVER_TIMESTAMP,
+                # Add other fields like parent_comment_id for replies, etc.
+            }
 
-                created_comment = comment_ref.get().to_dict()
-                created_comment['id'] = comment_ref.id
-                return Response(created_comment, status=status.HTTP_201_CREATED)
+            try:
+                # Define the transactional function
+                # It takes the transaction object and any other arguments it needs
+                @firestore.transactional
+                def create_comment_and_increment_count(transaction, current_post_ref, payload):
+                    # Re-read post document within the transaction to ensure latest state
+                    # This read helps Firestore detect conflicts and retry the transaction if needed.
+                    current_post_doc_in_tx = current_post_ref.get(transaction=transaction)
+                    if not current_post_doc_in_tx.exists:
+                        # If the post was deleted concurrently, this transaction will fail.
+                        raise ValueError("Post not found during transaction.")
+
+                    # Add the new comment document to the subcollection
+                    # Get a new auto-ID document reference for the comment
+                    new_comment_ref = current_post_ref.collection('comments').document()
+                    transaction.set(new_comment_ref, payload)
+
+                    # Increment the comment_count on the parent Post document
+                    transaction.update(current_post_ref, {
+                        'comment_count': firestore.Increment(1)
+                    })
+                    
+                    return new_comment_ref.id # Return the ID of the newly created comment
+
+                # Run the transactional function.
+                # It's called like a regular function, and db.transaction() is implicitly passed.
+                # db.transaction() will retry the function automatically on contention.
+                new_comment_id = create_comment_and_increment_count(db.transaction(), post_ref, comment_payload)
+                
+                # After successful transaction, fetch the created comment data for response
+                created_comment_doc = post_ref.collection('comments').document(new_comment_id).get()
+                created_comment_data = created_comment_doc.to_dict()
+                created_comment_data['id'] = new_comment_id
+                
+                return Response(created_comment_data, status=status.HTTP_201_CREATED)
+
+            except ValueError as ve: # Catch explicit errors from inside the transaction function
+                return Response({"error": f"Transaction failed: {str(ve)}"}, status=status.HTTP_400_BAD_REQUEST)
             except Exception as e:
+                # Catch any other Firestore errors or general exceptions
+                print(f"Error creating comment with transaction: {e}") # Log the full error for debugging
                 return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class CommentListFirestoreView(APIView):
     """
@@ -597,3 +506,117 @@ class LikeListFirestoreView(APIView):
         except Exception as e:
             # Catch any other potential errors during Firestore interaction
             return Response({"error": f"Failed to retrieve likes: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class SharePostFirestoreView(APIView):
+    """
+    Allows an authenticated user to share a specific post using a Firestore transactional decorator.
+    URL: /api/posts/{post_id}/share/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, post_id):
+        user_id = str(request.user.id) # Firestore UIDs are strings
+
+        # 1. Get references to the documents we'll interact with
+        post_ref = db.collection('posts').document(post_id)
+        shares_ref = db.collection('shares')
+
+        try:
+            # 2. Initial Post Existence Check (outside transaction for quick validation)
+            post_doc_snapshot = post_ref.get()
+            if not post_doc_snapshot.exists:
+                return Response({"message": "Post not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            # 3. Check if the user has already shared (outside transaction for quick feedback)
+            existing_share_query = shares_ref.where('user_id', '==', user_id)\
+                                           .where('post_id', '==', post_id)\
+                                           .limit(1).get()
+
+            if existing_share_query:
+                return Response({"message": "You have already shared this post."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # --- Define the transactional function ---
+            # It takes the transaction object and any other arguments it needs
+            @firestore.transactional
+            def create_share_and_increment_count(transaction, current_post_ref, current_shares_ref, payload):
+                # Re-read post document within the transaction to ensure latest state
+                current_post_doc_in_tx = current_post_ref.get(transaction=transaction)
+                if not current_post_doc_in_tx.exists:
+                    # If the post was deleted concurrently, this transaction will fail.
+                    raise ValueError("Post not found during transaction.")
+
+                # Create the share document within the transaction
+                new_share_doc_ref = current_shares_ref.document() # Get a new auto-ID document reference
+                transaction.set(new_share_doc_ref, payload)
+
+                # Increment the share_count on the Post document within the transaction
+                transaction.update(current_post_ref, {
+                    'share_count': firestore.Increment(1)
+                })
+                
+                return new_share_doc_ref.id # Return the ID of the newly created share
+
+            # --- Run the transactional function ---
+            # It's called like a regular function, and db.transaction() is implicitly passed.
+            # db.transaction() will retry the function automatically on contention.
+            share_payload = {
+                'user_id': user_id,
+                'post_id': post_id,
+                'shared_at': firestore.SERVER_TIMESTAMP,
+            }
+            new_share_id = create_share_and_increment_count(db.transaction(), post_ref, shares_ref, share_payload)
+            
+            return Response({"message": "Post shared successfully.", "share_id": new_share_id}, status=status.HTTP_201_CREATED)
+
+        except ValueError as ve: # Catch explicit errors from inside the transaction function
+            return Response({"error": f"Transaction failed: {str(ve)}"}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            print(f"Error sharing post with transaction: {e}") # Log the full error
+            return Response({"error": f"Failed to share post: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class UserPostsFirestoreView(APIView):
+    """
+    List all posts by a specific user identified by their user_id.
+    URL: /api/users/{user_id}/posts/
+    """
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def get(self, request, user_id): # Now expecting user_id directly
+        target_user_id = user_id # Directly use the user_id from the URL
+
+        try:
+            # 1. Fetch posts for the identified user_id
+            posts_ref = db.collection('posts')
+            # Assuming 'author_id' field in your 'posts' collection stores the user_id
+            posts_query = posts_ref.where('author_id', '==', target_user_id).order_by('timestamp', direction=firestore.Query.DESCENDING).stream()
+            
+            posts_list = []
+            
+            # 2. Process posts and determine 'has_liked'
+            current_user_id = None
+            if request.user.is_authenticated:
+                current_user_id = str(request.user.id) # Get current authenticated user's ID
+
+            for doc in posts_query:
+                post_data = doc.to_dict()
+                post_data['id'] = doc.id # Include the document ID
+                
+                post_data['has_liked'] = False # Default to False
+                if current_user_id: # Only check if the requesting user is authenticated
+                    # Check if a 'like' document exists for the current user in the post's 'likes' subcollection
+                    like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
+                    post_data['has_liked'] = like_doc_ref.get().exists
+                
+                posts_list.append(post_data)
+
+            # 3. Serialize the list of posts
+            serializer = FirestorePostOutputSerializer(posts_list, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            # Catch broader exceptions like Firestore errors or network issues
+            print(f"Error retrieving user posts: {e}")
+            return Response({"error": f"Failed to retrieve posts for user: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+

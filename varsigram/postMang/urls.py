@@ -2,7 +2,8 @@ from django.urls import path
 from .views import (
     PostListCreateFirestoreView, PostDetailFirestoreView,
     CommentCreateFirestoreView, CommentListFirestoreView,
-    LikeToggleFirestoreView, LikeListFirestoreView, FollowingOrganizationsView, OrganizationFollowersView, FollowOrganizationView, UnfollowOrganizationView 
+    LikeToggleFirestoreView, LikeListFirestoreView, FollowingOrganizationsView, OrganizationFollowersView, FollowOrganizationView, UnfollowOrganizationView, SharePostFirestoreView,
+    UserPostsFirestoreView
 )
 
 urlpatterns = [
@@ -12,10 +13,8 @@ urlpatterns = [
     path('posts/<str:post_id>/comments/', CommentListFirestoreView.as_view(), name='post-comments'),
     path('posts/<str:post_id>/like/', LikeToggleFirestoreView.as_view(), name='post-like'),
     path('posts/<str:post_id>/likes/', LikeListFirestoreView.as_view(), name='post-likes-list'), # New URL for listing likes
-    # path('posts/<slug:slug>/share/', SharePostView.as_view(), name='post-share'),
-    # path('users/<slug:display_name_slug>/posts/', UserPostsView.as_view(), name='user-posts'),
-    # path('posts/<slug:slug>/edit/', PostUpdateView.as_view(), name='post-edit'),
-    # path('posts/<slug:slug>/delete/', PostDeleteView.as_view(), name='post-delete'),
+    path('posts/<str:post_id>/share/', SharePostFirestoreView.as_view(), name='post-share'),
+    path('users/<str:user_id>/posts/', UserPostsFirestoreView.as_view(), name='user-posts'),
     # path('posts/search/', PostSearchView.as_view(), name='post-search'),
     # path('feed/', FeedView.as_view(), name='feed'),
     # path('trending/', TrendingPostsView.as_view(), name='trending-posts'),
