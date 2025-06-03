@@ -65,3 +65,15 @@
 # api/v1/ users/<slug:display_name_slug>/followers/ [name='organization-followers'] : This endpoint is used to view the organization's followers.
 
 # api/v1/ following/ [name='following-organizations'] : This endpoint is used to view the following organizations.
+
+# SQL queries:
+# Users Account and Authentication:
+# User Profiles
+# Following and Followers
+
+# Firestore queries:
+# Posts and Comments
+# Likes and Shares
+# Messages
+# Notifications
+# FEED

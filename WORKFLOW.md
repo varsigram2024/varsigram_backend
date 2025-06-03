@@ -11,7 +11,7 @@ We use a structured branching workflow based on Gitflow. Below are the branches 
 | Branch        | Purpose                                                |
 |---------------|--------------------------------------------------------|
 | `main`        | Contains production-ready code.                        |
-| `develop`     | Contains the latest integrated development code.        |
+| `develop`     | Contains the latest integrated development code.       |
 | `feature`     | Used for developing new features.                      |
 | `bugfix`      | Used to fix bugs in the `develop` branch.              |
 | `release`     | Used to prepare the code for a production release.     |

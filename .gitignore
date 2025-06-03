@@ -162,3 +162,4 @@ cython_debug/
 #.idea/
 
 varsigram/config/versigram-pd-firebase-adminsdk.json
+varsigram/config/versigram-pd-firebase-adminsdk-fbsvc-bdc5bbc735.json
