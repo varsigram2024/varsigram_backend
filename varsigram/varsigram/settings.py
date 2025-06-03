@@ -56,6 +56,8 @@ INSTALLED_APPS = [
     'users',
     'chat',
     'postMang',
+    # 'django_celery_results',  # For storing task results in the database
+    # 'postMang.apps.FirebaseConfig',  # Firebase configuration app
 ]
 
 MIDDLEWARE = [

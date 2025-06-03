@@ -1,17 +1,19 @@
 from rest_framework import generics, permissions, filters
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from django.shortcuts import get_object_or_404
 from django.db.models import Exists, OuterRef, Count, Q
 from django.http import Http404
+from django.contrib.auth import get_user_model
 from firebase_admin import firestore
-
+from postMang.apps import db  # Import the Firestore client from the app config
 from .models import ( Post, Comment, Like, Share,
                      User, Follow, Student, Organization)
-from .serializer import PostSerializer, CommentSerializer, LikeSerializer, ShareSerializer, FollowSerializer, FollowingSerializer
+from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, FirestoreShareCreateInputSerializer, FirestoreShareOutputSerializer, FollowingSerializer, FollowSerializer
 from .utils import IsOwnerOrReadOnly
 from itertools import chain
-from ..firebase import db
+
 
 
 # class PostListCreateView(generics.ListCreateAPIView):
@@ -153,68 +155,68 @@ from ..firebase import db
 #             ).order_by('-like_count', '-created_at')
 #         return super().get_queryset().order_by('-like_count', '-created_at')
 
-# class FollowOrganizationView(generics.CreateAPIView):
-#     serializer_class = FollowSerializer
-#     permission_classes = [permissions.IsAuthenticated]
+class FollowOrganizationView(generics.CreateAPIView):
+    serializer_class = FollowSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
-#     def perform_create(self, serializer):
-#         organization_display_name = self.kwargs['display_name_slug']
-#         try:
-#             organization = Organization.objects.get(display_name_slug=organization_display_name)
-#             student = Student.objects.get(user=self.request.user)
+    def perform_create(self, serializer):
+        organization_display_name = self.kwargs['display_name_slug']
+        try:
+            organization = Organization.objects.get(display_name_slug=organization_display_name)
+            student = Student.objects.get(user=self.request.user)
 
-#             if Follow.objects.filter(student=student, organization=organization).exists():
-#                 return Response({"message": "You are already following this organization."}, status=status.HTTP_400_BAD_REQUEST)
+            if Follow.objects.filter(student=student, organization=organization).exists():
+                return Response({"message": "You are already following this organization."}, status=status.HTTP_400_BAD_REQUEST)
 
-#             serializer.save(student=student, organization=organization)
-#             return Response({"message": "Following successful!"}, status=status.HTTP_201_CREATED)
+            serializer.save(student=student, organization=organization)
+            return Response({"message": "Following successful!"}, status=status.HTTP_201_CREATED)
 
-#         except Organization.DoesNotExist:
-#             return Response({"message": "Organization not found."}, status=status.HTTP_404_NOT_FOUND)
-#         except Student.DoesNotExist:
-#             return Response({"message": "Only students can follow organizations."}, status=status.HTTP_400_BAD_REQUEST)
+        except Organization.DoesNotExist:
+            return Response({"message": "Organization not found."}, status=status.HTTP_404_NOT_FOUND)
+        except Student.DoesNotExist:
+            return Response({"message": "Only students can follow organizations."}, status=status.HTTP_400_BAD_REQUEST)
 
-# class UnfollowOrganizationView(generics.DestroyAPIView):
-#     """ Unfollow an organization """
-#     serializer_class = FollowSerializer
-#     permission_classes = [permissions.IsAuthenticated]
+class UnfollowOrganizationView(generics.DestroyAPIView):
+    """ Unfollow an organization """
+    serializer_class = FollowSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
-#     def get_object(self):
-#         organization_display_name_slug = self.kwargs['display_name_slug']
-#         try:
-#             organization = Organization.objects.get(display_name_slug=organization_display_name_slug)
-#             student = Student.objects.get(user=self.request.user)
-#             return Follow.objects.get(student=student, organization=organization)
-#         except Organization.DoesNotExist:
-#             return None
-#         except Follow.DoesNotExist:
-#             return None
+    def get_object(self):
+        organization_display_name_slug = self.kwargs['display_name_slug']
+        try:
+            organization = Organization.objects.get(display_name_slug=organization_display_name_slug)
+            student = Student.objects.get(user=self.request.user)
+            return Follow.objects.get(student=student, organization=organization)
+        except Organization.DoesNotExist:
+            return None
+        except Follow.DoesNotExist:
+            return None
 
 
-# class FollowingOrganizationsView(generics.ListAPIView):
-#     """ List organizations followed by a student """
-#     serializer_class = FollowingSerializer
-#     permission_classes = [permissions.IsAuthenticated]
+class FollowingOrganizationsView(generics.ListAPIView):
+    """ List organizations followed by a student """
+    serializer_class = FollowingSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
-#     def get_queryset(self):
-#         try:
-#             student = Student.objects.get(user=self.request.user)
-#             return Follow.objects.filter(student=student)
-#         except Student.DoesNotExist:
-#             return Follow.objects.none()
+    def get_queryset(self):
+        try:
+            student = Student.objects.get(user=self.request.user)
+            return Follow.objects.filter(student=student)
+        except Student.DoesNotExist:
+            return Follow.objects.none()
 
-# class OrganizationFollowersView(generics.ListAPIView):
-#     """ List followers of an organization """
-#     serializer_class = FollowSerializer
-#     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+class OrganizationFollowersView(generics.ListAPIView):
+    """ List followers of an organization """
+    serializer_class = FollowSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
-#     def get_queryset(self):
-#         organization_display_name_slug = self.kwargs['display_name_slug']
-#         try:
-#             organization = Organization.objects.get(display_name_slug=organization_display_name_slug)
-#             return Follow.objects.filter(organization=organization)
-#         except Organization.DoesNotExist:
-#             return Follow.objects.none()
+    def get_queryset(self):
+        organization_display_name_slug = self.kwargs['display_name_slug']
+        try:
+            organization = Organization.objects.get(display_name_slug=organization_display_name_slug)
+            return Follow.objects.filter(organization=organization)
+        except Organization.DoesNotExist:
+            return Follow.objects.none()
 
 # class FeedView(generics.ListAPIView):
 #     """ List posts in the feed """
@@ -293,17 +295,35 @@ class PostListCreateFirestoreView(APIView):
     def get(self, request):
         try:
             posts_ref = db.collection('posts').order_by('timestamp', direction=firestore.Query.DESCENDING)
-            # Implement pagination here if needed (using limit() and start_after())
+            # Add pagination logic here (e.g., limit, start_after) as discussed previously
+
             docs = posts_ref.stream()
             posts_list = []
+            post_ids = [] # To collect post IDs for 'has_liked' and potential user hydration
+
             for doc in docs:
                 post_data = doc.to_dict()
                 post_data['id'] = doc.id
-                # How to handle 'has_liked'? See notes at the end.
                 posts_list.append(post_data)
-            return Response(posts_list, status=status.HTTP_200_OK)
+                post_ids.append(doc.id) # Collect post IDs
+            
+            # --- Optional: Determine 'has_liked' for current user ---
+            # This is where the 'has_liked' flag is set based on the authenticated user.
+            # This logic can be resource-intensive for many posts without proper indexing/structure.
+            if request.user.is_authenticated and post_ids:
+                user_id = str(request.user.id)
+                for post in posts_list:
+                    # Check if a 'like' document exists for this user in the post's 'likes' subcollection
+                    like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
+                    post['has_liked'] = like_doc_ref.get().exists # Add 'has_liked' to the dictionary
+
+            # --- Serialize the list of posts ---
+            # The 'many=True' argument is crucial here because we're serializing a list.
+            serializer = FirestorePostOutputSerializer(posts_list, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": f"Failed to retrieve posts: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
     def post(self, request):
         if not request.user.is_authenticated:
@@ -315,7 +335,7 @@ class PostListCreateFirestoreView(APIView):
             try:
                 post_payload = {
                     'author_id': str(request.user.id), # Link to Django User ID
-                    'author_username': request.user.username, # Denormalize for convenience
+                    'author_username': request.user.email, # Denormalize for convenience
                     'content': data['content'],
                     'slug': data.get('slug', ''), # Handle slug generation if needed
                     'timestamp': firestore.SERVER_TIMESTAMP,
@@ -339,7 +359,7 @@ class PostDetailFirestoreView(APIView):
     Retrieve, update, or delete a single post from Firestore using document ID.
     If using slugs, you'd query: db.collection('posts').where('slug', '==', slug_value).limit(1).stream()
     """
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly] # Add IsFirestoreDocOwner for mutations
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsFirestoreDocOwner]
 
     def get_post_doc_and_data(self, post_id_or_slug, is_slug=False):
         try:
@@ -358,10 +378,10 @@ class PostDetailFirestoreView(APIView):
         except Exception: # Broad exception for brevity
             return None, None
 
-    def get(self, request, post_identifier): # post_identifier can be ID or slug
+    def get(self, request, post_id): # post_identifier can be ID or slug
         # Determine if post_identifier is a slug or ID based on your URL pattern
         # For this example, let's assume it's post_id. If using slug, pass is_slug=True
-        doc_ref, post_data = self.get_post_doc_and_data(post_identifier) #, is_slug=True if your URL uses slug)
+        doc_ref, post_data = self.get_post_doc_and_data(post_id) #, is_slug=True if your URL uses slug)
 
         if post_data:
             post_data['id'] = doc_ref.id
@@ -443,7 +463,7 @@ class CommentCreateFirestoreView(APIView):
                 comment_payload = {
                     'post_id': post_id,
                     'author_id': str(request.user.id),
-                    'author_username': request.user.username,
+                    'author_username': request.user.email,
                     'text': data['text'],
                     'timestamp': firestore.SERVER_TIMESTAMP
                 }
@@ -530,3 +550,50 @@ class LikeToggleFirestoreView(APIView):
 
         except Exception as e:
             return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+
+class LikeListFirestoreView(APIView):
+    """
+    List all likes for a specific post from Firestore.
+    This view returns basic like information directly from Firestore,
+    without hydrating user details from PostgreSQL.
+    URL: /api/posts/{post_id}/likes/
+    """
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def get(self, request, post_id):
+        post_ref = db.collection('posts').document(post_id)
+        # Check if the post itself exists
+        if not post_ref.get().exists:
+            return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            # Reference to the 'likes' subcollection of the specific post
+            likes_ref = post_ref.collection('likes').order_by('liked_at', direction=firestore.Query.ASCENDING)
+            docs = likes_ref.stream() # Get all like documents
+
+            raw_likes_list = []
+            for doc in docs:
+                like_data = doc.to_dict()
+                
+                # Add the Firestore document ID to the dictionary.
+                # Since you're likely using the user_id as the document ID for a like,
+                # 'id' will be the user_id. We also explicitly set 'user_id' in the dict
+                # to match the serializer's expectation clearly.
+                like_data['id'] = doc.id
+                like_data['user_id'] = doc.id # The user_id is the document ID of the like
+
+                # Add the post_id from the URL context, as it's not stored in the 'like' document itself
+                # if the 'likes' are just a subcollection with user_id and liked_at.
+                like_data['post_id'] = post_id 
+                
+                raw_likes_list.append(like_data)
+
+            # Serialize the data. 'many=True' because we are serializing a list.
+            serializer = FirestoreLikeOutputSerializer(raw_likes_list, many=True)
+            
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            # Catch any other potential errors during Firestore interaction
+            return Response({"error": f"Failed to retrieve likes: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

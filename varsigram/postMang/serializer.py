@@ -62,11 +62,16 @@ from users.serializer import UserSerializer, OrganizationProfileSerializer, Stud
 from .models import Post, Comment, Like, Share, Follow
 from rest_framework import serializers
 
-# ... (User related serializers can remain if User model is still in SQL) ...
 
 class FirestorePostCreateSerializer(serializers.Serializer):
     content = serializers.CharField(max_length=10000)
-    slug = serializers.SlugField(required=False) # If you still want to generate/use slugs
+    slug = serializers.CharField(max_length=255, required=False, allow_blank=True, help_text="Optional URL-friendly slug for the post.")
+    media_urls = serializers.ListField(
+        child=serializers.URLField(max_length=2000, allow_blank=True),
+        required=False,
+        allow_empty=True,
+        help_text="List of media URLs associated with the post."
+    )
     # Add other fields like media_url, etc.
 
     def validate_content(self, value):
@@ -86,8 +91,6 @@ class FirestoreCommentSerializer(serializers.Serializer):
             raise serializers.ValidationError("Comment text cannot be empty.")
         return value
 
-# You'll need serializers for Like and Share if they have input data, otherwise not strictly needed for create/delete.
-
 class FirestoreLikeOutputSerializer(serializers.Serializer):
     """
     Serializer for representing a 'Like' object fetched from Firestore.
@@ -97,35 +100,8 @@ class FirestoreLikeOutputSerializer(serializers.Serializer):
     """
     id = serializers.CharField(read_only=True) # Firestore document ID (e.g., user_id who liked)
     user_id = serializers.CharField(read_only=True) # ID of the user who liked
-    # If you want to nest user details (assuming UserSerializer works for your SQL User model):
-    # user = UserSerializer(read_only=True) # You'd need to pass the user object here
     post_id = serializers.CharField(read_only=True) # ID of the liked post
-    timestamp = serializers.DateTimeField(read_only=True, source='liked_at') # Assuming 'liked_at' field
-
-# your_app/serializers.py
-from rest_framework import serializers
-# Assuming UserSerializer is for your SQL-based Django User model
-from users.serializer import UserSerializer
-# from .firebase import db # Not typically needed in serializer, logic is in view
-
-# ... (other serializers) ...
-
-class FirestoreLikeOutputSerializer(serializers.Serializer):
-    """
-    Serializer for representing a 'Like' object fetched from Firestore.
-    Assumes a 'like' document might contain who liked and when.
-    The 'id' could be the user_id if that's how you key the like documents
-    under a post's 'likes' subcollection.
-    """
-    id = serializers.CharField(read_only=True) # Firestore document ID (e.g., user_id who liked)
-    user_id = serializers.CharField(read_only=True) # ID of the user who liked
-    # If you want to nest user details (assuming UserSerializer works for your SQL User model):
-    # user = UserSerializer(read_only=True) # You'd need to pass the user object here
-    post_id = serializers.CharField(read_only=True) # ID of the liked post
-    timestamp = serializers.DateTimeField(read_only=True, source='liked_at') # Assuming 'liked_at' field
-
-    # Note: For simply creating/deleting likes, your views might not need an input serializer
-    # as the necessary info (user_id from request, post_id from URL) is usually sufficient.    
+    timestamp = serializers.DateTimeField(read_only=True, source='liked_at') # Assuming 'liked_at' field  
 
 class FirestoreShareCreateInputSerializer(serializers.Serializer):
     """
@@ -135,13 +111,25 @@ class FirestoreShareCreateInputSerializer(serializers.Serializer):
     # post_id = serializers.CharField() # If you expect post_id in the request body
     user_comment = serializers.CharField(max_length=500, required=False, allow_blank=True, allow_null=True)
 
-# You'll need a FirestorePostOutputSerializer (adapted from previous responses)
-# if you want to nest the full post details. Let's assume you have one:
-class FirestorePostOutputSerializer(serializers.Serializer): # Simplified for this example
-    id = serializers.CharField(read_only=True)
-    author_username = serializers.CharField(read_only=True)
-    content = serializers.CharField(read_only=True)
-    # ... other relevant post fields ...
+class FirestorePostOutputSerializer(serializers.Serializer):
+    """
+    Serializer for representing a 'Post' object fetched from Firestore.
+    This is an OUTPUT (read-only) serializer, meant for displaying post data.
+    """
+    id = serializers.CharField(read_only=True, help_text="The Firestore document ID of the post.")
+    author_username = serializers.CharField(read_only=True, help_text="The username of the post's author (denormalized).")
+    content = serializers.CharField(read_only=True, help_text="The main text content of the post.")
+    
+    # Include other fields that exist in your Firestore post documents and you want to output:
+    slug = serializers.CharField(read_only=True, required=False, help_text="URL-friendly slug of the post.")
+    timestamp = serializers.DateTimeField(read_only=True, help_text="Timestamp when the post was created.")
+    like_count = serializers.IntegerField(read_only=True, help_text="Number of likes on the post.")
+    comment_count = serializers.IntegerField(read_only=True, help_text="Number of comments on the post.")
+    share_count = serializers.IntegerField(read_only=True, help_text="Number of shares of the post.")
+
+    # If you implement the 'has_liked' logic in your view:
+    has_liked = serializers.BooleanField(read_only=True, required=False, help_text="True if the current authenticated user has liked this post.")
+
 
 class FirestoreShareOutputSerializer(serializers.Serializer):
     """

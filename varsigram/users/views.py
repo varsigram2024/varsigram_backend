@@ -335,6 +335,7 @@ class UserReactivateView(generics.GenericAPIView):
 class SendOTPView(generics.GenericAPIView):
     """ Send OTP to user email """
     permission_classes = [IsAuthenticated]
+    serializer_class = SendOTPSerializer
 
     def post(self, request):
         """ Handles OTP sending for authenticated user. """
