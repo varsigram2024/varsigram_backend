@@ -27,13 +27,13 @@ BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 SECRET_KEY = os.environ.get('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 BASE_BACKEND_URL = os.environ.get('BASE_BACKEND_URL', 'http://localhost:8000')
 
 
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['31.97.69.115', 'localhost', '127.0.0.1']
 
 
 # Application definition
@@ -105,11 +105,11 @@ WSGI_APPLICATION = 'varsigram.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get("DB_NAME", "varsigram"),
-        'USER': os.environ.get("DB_USER", "postgres"),
-        'PASSWORD': os.environ.get("DB_PASSWORD", "postgres"),
+        'NAME': os.environ.get("DB_NAME", ""),
+        'USER': os.environ.get("DB_USER", ""),
+        'PASSWORD': os.environ.get("DB_PASSWORD", ""),
         'HOST': os.environ.get("DB_HOST", "localhost"),
-        'PORT': os.environ.get("DB_PORT", "5432"),
+        'PORT': os.environ.get("DB_PORT", ""),
         'ATOMIC_REQUESTS': True,
         'OPTIONS': {
             'options': '-c search_path=django,public'
