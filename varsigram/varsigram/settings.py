@@ -33,7 +33,7 @@ BASE_BACKEND_URL = os.environ.get('BASE_BACKEND_URL', 'http://localhost:8000')
 
 
 
-ALLOWED_HOSTS = ['31.97.69.115', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',')
 
 
 # Application definition
