@@ -207,7 +207,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 APPEND_SLASH = True
 
 FRONTEND_URL = os.environ.get('FRONTEND_URL', '').split(',')
-#print(FRONTEND_URL)
+print(FRONTEND_URL)
 
 CORS_ALLOWED_ORIGINS = [
     FRONTEND_URL,
