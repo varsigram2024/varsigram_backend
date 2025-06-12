@@ -100,6 +100,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'varsigram.wsgi.application'
+ASGI_APPLICATION = 'varsigram.asgi.application'
 
 
 # Database

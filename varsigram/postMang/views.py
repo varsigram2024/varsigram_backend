@@ -10,9 +10,11 @@ from firebase_admin import firestore
 from postMang.apps import db  # Import the Firestore client from the app config
 from .models import ( Post, Comment, Like, Share,
                      User, Follow, Student, Organization)
-from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, FollowingSerializer, FollowSerializer
+from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, FollowingSerializer, FollowSerializer, FirestoreShareOutputSerializer
 from .utils import IsOwnerOrReadOnly
 from itertools import chain
+import logging
+from datetime import datetime, timezone, timedelta
 
 # class TrendingPostsView(generics.ListAPIView):
 #     """ List trending posts """
@@ -90,60 +92,203 @@ class OrganizationFollowersView(generics.ListAPIView):
         except Organization.DoesNotExist:
             return Follow.objects.none()
 
-# class FeedView(generics.ListAPIView):
-#     """ List posts in the feed """
-#     permission_classes = [permissions.IsAuthenticated]
+logger = logging.getLogger(__name__)
+class FeedView(generics.ListAPIView):
+    """
+    List posts in the personalized feed based on user's follows and profile attributes,
+    and potentially shared posts.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = FirestorePostOutputSerializer # Default serializer
 
-#     def get_serializer_class(self):
-#         if 'shared' in self.request.query_params:
-#             return ShareSerializer
-#         return PostSerializer
+    def get_serializer_class(self):
+        # This part handles 'shared' query param if you have a separate ShareSerializer
+        if 'shared' in self.request.query_params:
+            return FirestoreShareOutputSerializer # Make sure this serializer works with your Share data structure
+        return FirestorePostOutputSerializer
 
-#     def get_queryset(self):
-#         user = self.request.user
-#         shared = self.request.query_params.get('shared', None)
-
-#         try:
-#             student = Student.objects.get(user=user)
-#             following_organizations = Follow.objects.filter(student=student).values_list('organization__user', flat=True)
-#             department = student.department
-#             faculty = student.faculty
-#             religion = student.religion
-
-#             # Pre-query for followed organizations (assuming Follow model has a student field)
-#             # followed_user_pks = Follow.objects.filter(student=student).values_list('user__pk', flat=True)
-
-#             # Combine filters into a single Q object
-#             combined_filter = Q(user__in=following_organizations)
-#             if department:
-#                 combined_filter |= Q(user__student__department=department)
-#             if faculty:
-#                 combined_filter |= Q(user__student__faculty=faculty)
-#             if religion:
-#                 combined_filter |= Q(user__student__religion=religion)
-            
-
-#             post_queryset = Post.objects.filter(combined_filter)
-#             share_queryset = Share.objects.filter(user=user) if shared else Share.objects.none()
-
-#             queryset = sorted(
-#                 chain(post_queryset, share_queryset),
-#                 key=lambda instance: instance.created_at if isinstance(instance, Post) else instance.shared_at,
-#                 reverse=True
-#             )
-#         except Student.DoesNotExist:
-#             queryset = Post.objects.all().order_by('-created_at')
-
-#         if self.request.user.is_authenticated:
-#             annotated_queryset = []
-#             for item in queryset:
-#                 if isinstance(item, Post):
-#                     annotated_queryset.append(Post.objects.filter(pk=item.pk).annotate(has_liked=Exists(Like.objects.filter(post=OuterRef('pk'), user=self.request.user))).first())
-#                 else:
-#                     annotated_queryset.append(item)
-#             return annotated_queryset
+    def get_queryset(self): 
+        user = self.request.user
+        shared_param = self.request.query_params.get('shared', None)
+        posts_limit = 20
         
-#         return queryset
+        last_created_at_str = self.request.query_params.get('last_created_at')
+        last_post_id = self.request.query_params.get('last_post_id')
+
+        start_after_values = None
+        if last_created_at_str and last_post_id:
+            try:
+                start_after_created_at = datetime.fromisoformat(last_created_at_str.replace('Z', '+00:00'))
+                start_after_values = (start_after_created_at, last_post_id) 
+            except ValueError:
+                logger.warning(f"Invalid last_created_at format: {last_created_at_str}")
+                start_after_values = None
+
+        all_feed_posts = {} 
+
+        try:
+            student = Student.objects.select_related('user').get(user=user)
+            user_id_postgres = str(user.id) 
+
+            followed_org_user_ids = list(Follow.objects.filter(student=student).values_list('organization__user__id', flat=True))
+            if followed_org_user_ids:
+                logger.info(f"User {user_id_postgres} follows organizations: {followed_org_user_ids}")
+                if len(followed_org_user_ids) > 10:
+                    logger.warning("Too many followed organizations for single Firestore 'in' query. Limiting to first 10.")
+                    followed_org_user_ids = followed_org_user_ids[:10] 
+                
+                try:
+                    followed_posts_query = db.collection('posts') \
+                                             .where('author_id', 'in', [str(uid) for uid in followed_org_user_ids]) \
+                                             .order_by('created_at', direction=firestore.Query.DESCENDING) # Order by created_at for feed
+                                             
+                    if start_after_values:
+                        followed_posts_query = followed_posts_query.start_after(start_after_values[0], start_after_values[1])
+                    followed_posts_query = followed_posts_query.limit(posts_limit)
+
+                    for doc in followed_posts_query.stream():
+                        post_data = doc.to_dict()
+                        post_data['id'] = doc.id
+                        all_feed_posts[doc.id] = post_data
+                except Exception as e:
+                    logger.error(f"Error fetching followed organization posts for user {user_id_postgres}: {e}", exc_info=True)
+
+
+            eligible_user_ids = set() 
+
+            if student.department:
+                dept_users = User.objects.filter(student__department=student.department).values_list('id', flat=True)
+                eligible_user_ids.update(dept_users)
+                logger.info(f"Found {len(dept_users)} users in same department for user {user_id_postgres}.")
+
+            if student.faculty:
+                faculty_users = User.objects.filter(student__faculty=student.faculty).values_list('id', flat=True)
+                eligible_user_ids.update(faculty_users)
+                logger.info(f"Found {len(faculty_users)} users in same faculty for user {user_id_postgres}.")
+
+            if student.religion:
+                religion_users = User.objects.filter(student__religion=student.religion).values_list('id', flat=True)
+                eligible_user_ids.update(religion_users)
+                logger.info(f"Found {len(religion_users)} users with same religion for user {user_id_postgres}.")
+            
+            eligible_user_ids.discard(user.id) 
+
+            eligible_user_ids_list = [str(uid) for uid in list(eligible_user_ids)]
+            if eligible_user_ids_list:
+                if len(eligible_user_ids_list) > 10:
+                    logger.warning("Too many eligible users for single Firestore 'in' query. Limiting to first 10.")
+                    eligible_user_ids_list = eligible_user_ids_list[:10] 
+
+                try:
+                    attribute_posts_query = db.collection('posts') \
+                                            .where('author_id', 'in', eligible_user_ids_list) \
+                                            .order_by('created_at', direction=firestore.Query.DESCENDING)
+                    
+                    if start_after_values:
+                        attribute_posts_query = attribute_posts_query.start_after(start_after_values[0], start_after_values[1])
+                    attribute_posts_query = attribute_posts_query.limit(posts_limit)
+
+                    for doc in attribute_posts_query.stream():
+                        post_data = doc.to_dict()
+                        post_data['id'] = doc.id
+                        all_feed_posts[doc.id] = post_data
+                except Exception as e:
+                    logger.error(f"Error fetching attribute-based posts for user {user_id_postgres}: {e}", exc_info=True)
+
+
+            if shared_param == 'true':
+                try:
+                    shared_posts_query = db.collection('shares') \
+                                           .where('shared_by_id', '==', user_id_postgres) \
+                                           .order_by('shared_at', direction=firestore.Query.DESCENDING)
+                    
+                    if start_after_values: 
+                        shared_posts_query = shared_posts_query.start_after(start_after_values[0], start_after_values[1])
+                    shared_posts_query = shared_posts_query.limit(posts_limit)
+
+                    for share_doc in shared_posts_query.stream():
+                        share_data = share_doc.to_dict()
+                        original_post_id = share_data.get('original_post_id')
+                        if original_post_id and original_post_id not in all_feed_posts:
+                            original_post_ref = db.collection('posts').document(original_post_id)
+                            original_post_doc = original_post_ref.get()
+                            if original_post_doc.exists:
+                                post_data = original_post_doc.to_dict()
+                                post_data['id'] = original_post_doc.id
+                                post_data['is_shared'] = True 
+                                post_data['shared_by_id'] = share_data.get('shared_by_id')
+                                post_data['shared_at'] = share_data.get('shared_at')
+                                all_feed_posts[original_post_doc.id] = post_data
+                            else:
+                                logger.warning(f"Shared post {original_post_id} not found for share {share_doc.id}")
+                except Exception as e:
+                    logger.error(f"Error fetching shared posts for user {user_id_postgres}: {e}", exc_info=True)
+
+            if not all_feed_posts:
+                logger.info(f"No personalized feed posts found for user {user_id_postgres}. Fetching general recent posts.")
+                general_posts_query = db.collection('posts') \
+                                        .order_by('created_at', direction=firestore.Query.DESCENDING)
+                
+                if start_after_values:
+                    general_posts_query = general_posts_query.start_after(start_after_values[0], start_after_values[1])
+                general_posts_query = general_posts_query.limit(posts_limit)
+
+                for doc in general_posts_query.stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    all_feed_posts[doc.id] = post_data
+
+        except Student.DoesNotExist:
+            logger.info(f"Student profile not found for user {user.id}. Falling back to general recent posts.")
+            general_posts_query = db.collection('posts') \
+                                    .order_by('created_at', direction=firestore.Query.DESCENDING)
+            
+            if start_after_values:
+                general_posts_query = general_posts_query.start_after(start_after_values[0], start_after_values[1])
+            general_posts_query = general_posts_query.limit(posts_limit)
+
+            for doc in general_posts_query.stream():
+                post_data = doc.to_dict()
+                post_data['id'] = doc.id
+                all_feed_posts[doc.id] = post_data
+        except Exception as e:
+            logger.error(f"Unexpected error during feed generation for user {user.id}: {e}", exc_info=True)
+            return []
+
+
+        final_posts = list(all_feed_posts.values())
+        final_posts.sort(key=lambda x: x.get('created_at', datetime.min.replace(tzinfo=timezone.utc)), reverse=True)
+
+        user_id_str = str(user.id)
+        for post in final_posts:
+            post_id = post.get('id')
+            try:
+                like_doc = db.collection('posts').document(post_id).collection('likes').document(user_id_str).get()
+                post['has_liked'] = like_doc.exists
+            except Exception as e:
+                logger.warning(f"Error checking like status for post {post_id} by user {user_id_str}: {e}")
+                post['has_liked'] = False
+        
+        return final_posts
+
+    def list(self, request, *args, **kwargs):
+        posts_data = self.get_queryset()
+
+        # --- OPTIMIZATION 1: Pre-fetch author details from PostgreSQL ---
+        # Get all unique author_ids from the posts data
+        author_ids = list(set(str(post['author_id']) for post in posts_data if 'author_id' in post))
+
+        # Fetch all necessary user objects in a single query
+        # Use .in_bulk() or filter(id__in=...) to get them as a dictionary for easy lookup
+        # Ensure your User model has 'profile_pic_url'
+        authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url')
+        authors_map = {str(author.id): author for author in authors_from_postgres}
+
+        # Pass this map to the serializer context
+        serializer = self.get_serializer(posts_data, many=True, context={'authors_map': authors_map, 'request': request})
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 # Custom Permission Example (simplified)
 class IsFirestoreDocOwner(permissions.BasePermission):
@@ -214,6 +359,7 @@ class PostListCreateFirestoreView(APIView):
                     'like_count': 0,
                     'comment_count': 0,
                     'share_count': 0,
+                    'media_urls': data.get('media_urls', []), # Handle media URLs if provided
                     # Add other fields like media_urls, visibility, etc.
                 }
                 # Add a new document with an auto-generated ID
@@ -418,6 +564,48 @@ class CommentListFirestoreView(APIView):
 ##
 ## Like Views (Firestore)
 ##
+# class LikeToggleFirestoreView(APIView):
+#     """
+#     Like or unlike a post. A single endpoint to toggle the like status.
+#     URL: /api/posts/{post_id}/like/
+#     """
+#     permission_classes = [permissions.IsAuthenticated]
+
+#     def post(self, request, post_id): # post_id from URL
+#         user_id = str(request.user.id)
+#         post_ref = db.collection('posts').document(post_id)
+#         like_ref = post_ref.collection('likes').document(user_id) # Document ID is the user's ID
+
+#         try:
+#             post_doc = post_ref.get()
+#             if not post_doc.exists:
+#                 return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
+
+#             like_doc = like_ref.get()
+            
+#             # Use a Firestore transaction to ensure atomic like/unlike and count update
+#             @firestore.transactional
+#             def toggle_like_transaction(transaction, current_post_ref, current_like_ref, current_like_exists):
+#                 if current_like_exists:
+#                     transaction.delete(current_like_ref)
+#                     transaction.update(current_post_ref, {'like_count': firestore.Increment(-1)})
+#                     return False # Unliked
+#                 else:
+#                     transaction.set(current_like_ref, {'liked_at': firestore.SERVER_TIMESTAMP})
+#                     transaction.update(current_post_ref, {'like_count': firestore.Increment(1)})
+#                     return True # Liked
+
+#             transaction = db.transaction()
+#             liked_now = toggle_like_transaction(transaction, post_ref, like_ref, like_doc.exists)
+
+#             if liked_now:
+#                 return Response({"message": "Post liked successfully."}, status=status.HTTP_201_CREATED)
+#             else:
+#                 return Response({"message": "Post unliked successfully."}, status=status.HTTP_200_OK) # Or 204 if you prefer
+
+#         except Exception as e:
+#             return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
 class LikeToggleFirestoreView(APIView):
     """
     Like or unlike a post. A single endpoint to toggle the like status.
@@ -440,13 +628,24 @@ class LikeToggleFirestoreView(APIView):
             # Use a Firestore transaction to ensure atomic like/unlike and count update
             @firestore.transactional
             def toggle_like_transaction(transaction, current_post_ref, current_like_ref, current_like_exists):
+                # Define the weight for a like in the trending score
+                LIKE_TREND_WEIGHT = 1 
+
                 if current_like_exists:
                     transaction.delete(current_like_ref)
-                    transaction.update(current_post_ref, {'like_count': firestore.Increment(-1)})
+                    transaction.update(current_post_ref, {
+                        'like_count': firestore.Increment(-1),
+                        'trending_score': firestore.Increment(-LIKE_TREND_WEIGHT), # Decrement trending score
+                        'last_engagement_at': firestore.SERVER_TIMESTAMP # Update last engagement time
+                    })
                     return False # Unliked
                 else:
                     transaction.set(current_like_ref, {'liked_at': firestore.SERVER_TIMESTAMP})
-                    transaction.update(current_post_ref, {'like_count': firestore.Increment(1)})
+                    transaction.update(current_post_ref, {
+                        'like_count': firestore.Increment(1),
+                        'trending_score': firestore.Increment(LIKE_TREND_WEIGHT), # Increment trending score
+                        'last_engagement_at': firestore.SERVER_TIMESTAMP # Update last engagement time
+                    })
                     return True # Liked
 
             transaction = db.transaction()
@@ -455,11 +654,13 @@ class LikeToggleFirestoreView(APIView):
             if liked_now:
                 return Response({"message": "Post liked successfully."}, status=status.HTTP_201_CREATED)
             else:
-                return Response({"message": "Post unliked successfully."}, status=status.HTTP_200_OK) # Or 204 if you prefer
+                return Response({"message": "Post unliked successfully."}, status=status.HTTP_200_OK)
 
         except Exception as e:
+            # It's good practice to log the full exception here for debugging
+            logging.error(f"Error toggling like for post {post_id}: {e}")
             return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
+
 
 class LikeListFirestoreView(APIView):
     """
@@ -507,6 +708,107 @@ class LikeListFirestoreView(APIView):
             # Catch any other potential errors during Firestore interaction
             return Response({"error": f"Failed to retrieve likes: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+class TrendingPostsFirestoreView(generics.ListAPIView):
+    """
+    Retrieve a list of trending posts from Firestore.
+    Trending is based on a 'trending_score' field and filtered by recent engagement.
+    """
+    permission_classes = [permissions.AllowAny] 
+    serializer_class = FirestorePostOutputSerializer # Use the serializer for output formatting
+
+    def get_queryset(self):
+        posts_ref = db.collection('posts')
+
+        # --- Define the time window for "recent" engagement ---
+        # Get posts with engagement in the last 7 days.
+        # This value can be made configurable (e.g., via query parameters in a more complex API)
+        RECENT_ENGAGEMENT_DAYS = 7 
+        
+        # Calculate the cutoff datetime. Always use UTC for consistency with Firestore timestamps.
+        now_utc = datetime.now(timezone.utc)
+        from_datetime_utc = now_utc - timedelta(days=RECENT_ENGAGEMENT_DAYS)
+
+        logging.info(f"Fetching trending posts engaged since: {from_datetime_utc.isoformat()}")
+
+        # ----------------------------------------------------------------------
+        # Firestore Query Construction:
+        # 1. Filter by recent engagement: `where('last_engagement_at', '>=', from_datetime_utc)`
+        # 2. Order by recency: `order_by('last_engagement_at', direction=firestore.Query.DESCENDING)`
+        # 3. Order by trending score (secondary sort): `order_by('trending_score', direction=firestore.Query.DESCENDING)`
+        #
+        # IMPORTANT: For this combined query, you MUST create a composite index in Firestore.
+        # The required index will be on (last_engagement_at ASC, trending_score DESC).
+        # If you get a Firestore error about a "missing index", follow the URL provided
+        # in the error message to create it in the Firebase console.
+        # ----------------------------------------------------------------------
+        
+        query = posts_ref.where('last_engagement_at', '>=', from_datetime_utc) \
+                         .order_by('last_engagement_at', direction=firestore.Query.DESCENDING) \
+                         .order_by('trending_score', direction=firestore.Query.DESCENDING) \
+                         .limit(20) # Limit the number of trending posts returned (e.g., top 20)
+
+        try:
+            docs = query.stream()
+            # Convert Firestore documents to a list of dictionaries for the serializer
+            posts_list = []
+            for doc in docs:
+                post_data = doc.to_dict()
+                post_data['id'] = doc.id # Add the document ID to the dictionary
+                posts_list.append(post_data)
+            return posts_list # Return a list of dicts
+        except Exception as e:
+            logging.error(f"Failed to fetch trending posts from Firestore: {e}", exc_info=True)
+            # Depending on your error handling, you might return an empty list or raise an APIException
+            return [] 
+
+    def list(self, request, *args, **kwargs):
+        posts_data = self.get_queryset() # This now returns a list of dictionaries
+
+        # --- Optimize 'has_liked' check for authenticated users ---
+        # Fetch all likes for the current user once, if authenticated.
+        user_liked_post_ids = set()
+        if request.user.is_authenticated:
+            user_id = str(request.user.id)
+            try:
+                # Query all posts liked by the current user within the trending set
+                # (This is more efficient than N separate subcollection reads if your liked_posts are stored this way)
+                # Alternative: If you have a 'users/{user_id}/liked_posts' collection
+                # liked_docs = db.collection('users').document(user_id).collection('liked_posts').stream()
+                # user_liked_post_ids = {doc.id for doc in liked_docs}
+
+                # If 'likes' are only subcollections of posts, you still need per-post check,
+                # but we'll try to optimize by creating a list of promises if using async,
+                # or just acknowledge the N reads for now. The previous per-post read is often
+                # the most straightforward for a list that isn't excessively long (e.g., < 50 posts).
+                
+                # For this synchronous view, the per-post check is still the most direct.
+                # However, the previous comment was about the *overall* scalability if this list
+                # could become huge (e.g., hundreds or thousands of trending posts).
+                # For a reasonable limit like 20, the current approach is fine.
+                pass # The check is done below in the loop.
+            except Exception as e:
+                logging.warning(f"Could not fetch liked posts for user {user_id}: {e}")
+                # user_liked_post_ids remains empty
+        
+        # Iterate through the fetched posts and add 'has_liked' status
+        for post in posts_data:
+            post_id = post.get('id') # Already included in get_queryset
+            if request.user.is_authenticated:
+                user_id = str(request.user.id)
+                try:
+                    # Perform the individual subcollection read for has_liked
+                    like_doc = db.collection('posts').document(post_id).collection('likes').document(user_id).get()
+                    post['has_liked'] = like_doc.exists
+                except Exception as e:
+                    logging.warning(f"Error checking like status for post {post_id}: {e}")
+                    post['has_liked'] = False
+            else:
+                post['has_liked'] = False
+
+        # Use the serializer to format the output
+        serializer = self.get_serializer(posts_data, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 class SharePostFirestoreView(APIView):
     """

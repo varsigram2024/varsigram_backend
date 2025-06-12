@@ -247,8 +247,13 @@ Most endpoints require authentication. Authentication is handled using token-bas
 
         ```json
         {
-          "content": "Post content",
-          "image": "image_file" (Optional - file upload)
+        "content": "",
+        "slug": "",
+        "media_urls": [
+            "",
+            "",
+            ""
+        ]
         }
         ```
 

@@ -42,6 +42,7 @@ class RegisterView(generics.GenericAPIView):
 
     def post(self, request, *args, **kwargs):
         """ Handle the POST request for user registration. """
+        print(f"Request Data from Frontend {request.data}")
         # Validate and create user, student, or organization
         data = clean_data(request.data)
         # print(f"Validated Data => {data}")

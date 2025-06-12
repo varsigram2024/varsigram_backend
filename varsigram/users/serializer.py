@@ -20,12 +20,12 @@ class UserSerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField()
     class Meta:
         model = User
-        fields = ['id', 'email', 'display_name', 'bio', 'is_deleted', 'is_verified']
+        fields = ['id', 'email', 'display_name', 'bio', 'is_deleted', 'is_verified', 'profile_pic_url']
         read_only_fields = ['id', 'is_deleted', 'is_verified']
     
     def get_display_name(self, obj):
         """ Get the display name for the user """
-        return str(obj)
+        return obj.display_name if obj.display_name else obj.email 
 
 
 class StudentRegisterSerializer(serializers.ModelSerializer):
@@ -45,7 +45,7 @@ class StudentRegisterSerializer(serializers.ModelSerializer):
 
 class StudentUpdateSerializer(serializers.ModelSerializer):
     """ Serializer for updating student objects """
-    user = UserSerializer()
+    user = UserSerializer(partial=True)
 
     class Meta:
         model = Student
@@ -95,7 +95,7 @@ class OrganizationRegisterSerializer(serializers.ModelSerializer):
 
 class OrganizationUpdateSerializer(serializers.ModelSerializer):
     """ Serializer for updating organization objects """
-    user = UserSerializer()
+    user = UserSerializer(partial=True)
 
     class Meta:
         model = Organization

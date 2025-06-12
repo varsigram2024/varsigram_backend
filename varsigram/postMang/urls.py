@@ -3,7 +3,7 @@ from .views import (
     PostListCreateFirestoreView, PostDetailFirestoreView,
     CommentCreateFirestoreView, CommentListFirestoreView,
     LikeToggleFirestoreView, LikeListFirestoreView, FollowingOrganizationsView, OrganizationFollowersView, FollowOrganizationView, UnfollowOrganizationView, SharePostFirestoreView,
-    UserPostsFirestoreView
+    UserPostsFirestoreView, TrendingPostsFirestoreView, FeedView
 )
 
 urlpatterns = [
@@ -16,8 +16,8 @@ urlpatterns = [
     path('posts/<str:post_id>/share/', SharePostFirestoreView.as_view(), name='post-share'),
     path('users/<str:user_id>/posts/', UserPostsFirestoreView.as_view(), name='user-posts'),
     # path('posts/search/', PostSearchView.as_view(), name='post-search'),
-    # path('feed/', FeedView.as_view(), name='feed'),
-    # path('trending/', TrendingPostsView.as_view(), name='trending-posts'),
+    path('feed/', FeedView.as_view(), name='feed'),
+    path('trending/', TrendingPostsFirestoreView.as_view(), name='trending-posts'),
     path('users/<slug:display_name_slug>/follow/', FollowOrganizationView.as_view(), name='follow-organization'),
     path('users/<slug:display_name_slug>/unfollow/', UnfollowOrganizationView.as_view(), name='unfollow-organization'),
     path('following/', FollowingOrganizationsView.as_view(), name='following-organizations'),

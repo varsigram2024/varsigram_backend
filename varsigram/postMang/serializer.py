@@ -58,9 +58,11 @@
 
 
 # your_app/serializers.py
+from datetime import datetime, timezone
 from users.serializer import UserSerializer, OrganizationProfileSerializer, StudentProfileSerializer
 from .models import Post, Comment, Like, Share, Follow
 from rest_framework import serializers
+import logging
 
 
 class FirestorePostCreateSerializer(serializers.Serializer):
@@ -118,10 +120,17 @@ class FirestorePostOutputSerializer(serializers.Serializer):
     """
     id = serializers.CharField(read_only=True, help_text="The Firestore document ID of the post.")
     author_username = serializers.CharField(read_only=True, help_text="The username of the post's author (denormalized).")
+    author_profile_pic_url = serializers.URLField(read_only=True, allow_null=True, allow_blank=True)
     content = serializers.CharField(read_only=True, help_text="The main text content of the post.")
     
     # Include other fields that exist in your Firestore post documents and you want to output:
     slug = serializers.CharField(read_only=True, required=False, help_text="URL-friendly slug of the post.")
+    media_urls = serializers.ListField(
+        child=serializers.URLField(max_length=2000, allow_blank=True),
+        read_only=True,
+        allow_empty=True,
+        help_text="List of media URLs associated with the post."
+    )
     timestamp = serializers.DateTimeField(read_only=True, help_text="Timestamp when the post was created.")
     like_count = serializers.IntegerField(read_only=True, help_text="Number of likes on the post.")
     comment_count = serializers.IntegerField(read_only=True, help_text="Number of comments on the post.")
@@ -129,6 +138,54 @@ class FirestorePostOutputSerializer(serializers.Serializer):
 
     # If you implement the 'has_liked' logic in your view:
     has_liked = serializers.BooleanField(read_only=True, required=False, help_text="True if the current authenticated user has liked this post.")
+    trending_score = serializers.IntegerField(default=0)
+    
+    # Firestore Timestamp objects need special handling for output
+    # You might want a custom field for this or simply convert to string
+    # For simplicity, let's assume it's just a string in the DB for now,
+    # or you'd use a custom serializer field or a datetime.datetime object.
+    # If last_engagement_at is a Firestore Timestamp, it will be a datetime object in Python
+    last_engagement_at = serializers.DateTimeField(required=False, allow_null=True)
+
+    # You might need to add a custom method for representation if your Firestore
+    # data structure doesn't directly map to these fields (e.g., nested author info)
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        
+        # Format Firestore Timestamps to ISO strings
+        for field in ['last_engagement_at', 'created_at', 'updated_at']:
+            if field in ret and isinstance(ret[field], datetime):
+                # Ensure datetime objects have timezone info before ISO formatting
+                if ret[field].tzinfo is None:
+                    ret[field] = ret[field].replace(tzinfo=timezone.utc)
+                ret[field] = ret[field].isoformat()
+
+
+        # Fetch author details from PostgreSQL using author_id from context
+        author_id = ret.get('author_id')
+        if author_id:
+            authors_map = self.context.get('authors_map')
+            if authors_map and str(author_id) in authors_map:
+                author = authors_map[str(author_id)]
+                # Use 'display_name' first, fallback to 'email' if display_name is not set
+                ret['author_display_name'] = author.display_name if author.display_name else author.email
+                ret['author_profile_pic_url'] = author.profile_pic_url
+            else:
+                # Fallback if author not in map (e.g., deleted user or not prefetched)
+                logging.warning(f"Author with PostgreSQL ID {author_id} not found in authors_map for post {ret.get('id')}.")
+                ret['author_display_name'] = "Unknown User"
+                ret['author_profile_pic_url'] = None
+        else:
+            ret['author_display_name'] = "Unknown User"
+            ret['author_profile_pic_url'] = None
+
+        # The 'has_liked' field should already be present in 'instance' (the post_data dict)
+        # because it's added in the FeedView.get_queryset before serialization.
+        # So, no change needed here for that.
+        
+        return ret
+
+
 
 
 class FirestoreShareOutputSerializer(serializers.Serializer):
