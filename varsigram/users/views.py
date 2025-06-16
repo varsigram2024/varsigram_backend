@@ -25,6 +25,8 @@ from django.conf import settings
 from auth.jwt import JWTAuthentication
 from django.contrib.auth import authenticate, login, logout
 from .tasks import send_otp_email
+from firebase_admin import storage
+from datetime import timedelta
 # import urllib.parse
 
 
@@ -378,6 +380,46 @@ class CheckUserVerification(APIView):
         if user.is_verified:
             return Response({"message": "User is verified."}, status=status.HTTP_200_OK)
         return Response({"message": "User is not verified."}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class GetSignedUploadUrlView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        # Validate input: file_name, content_type
+        # You might want to get the original file name and content type from the frontend
+        # For simplicity, let's assume it's passed in the request body
+        file_name = request.data.get('file_name')
+        content_type = request.data.get('content_type', 'application/octet-stream')
+
+        if not file_name:
+            return Response({"error": "file_name is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Generate a unique path for the profile picture
+        # It's good practice to ensure uniqueness and use the Django user ID
+        django_user_id = str(request.user.id)
+        unique_filename = f"{django_user_id}_{file_name}" # You might add a timestamp/UUID here too
+        storage_path = f"profile_pictures/{django_user_id}/{unique_filename}"
+
+        try:
+            bucket = storage.bucket() # Assumes default bucket is initialized
+            blob = bucket.blob(storage_path)
+
+            # Generate a signed URL that allows a PUT request for 15 minutes
+            upload_url = blob.generate_signed_url(
+                version="v4",
+                expiration=timedelta(minutes=15),
+                method="PUT",
+                content_type=content_type, # Ensure this matches what frontend sends
+            )
+            
+            return Response({
+                "upload_url": upload_url,
+                "file_path": storage_path # Optional: return path for frontend to construct public URL later
+            })
+        except Exception as e:
+            # Log the error carefully, avoid exposing sensitive details
+            return Response({"error": f"Could not generate signed URL: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # class PublicApi(APIView):
 #     authentication_classes = ()
