@@ -33,7 +33,16 @@ class FirebaseConfig(AppConfig):
 
             cred = credentials.Certificate(cred_path)
             
-            firebase_admin.initialize_app(cred)
+            FIREBASE_PROJECT_ID = os.environ.get('FIREBASE_PROJECT_ID', default=None)
+            FIREBASE_STORAGE_BUCKET = os.environ.get('FIREBASE_STORAGE_BUCKET', default=None)
+
+            options = {}
+            if FIREBASE_PROJECT_ID:
+                options['projectId'] = FIREBASE_PROJECT_ID
+            if FIREBASE_STORAGE_BUCKET:
+                options['storageBucket'] = FIREBASE_STORAGE_BUCKET
+
+            firebase_admin.initialize_app(cred, options)
             print("Firebase Admin SDK initialized.")
         
         # Initialize Firestore client after the main app is initialized

@@ -102,6 +102,11 @@ TEMPLATES = [
 WSGI_APPLICATION = 'varsigram.wsgi.application'
 ASGI_APPLICATION = 'varsigram.asgi.application'
 
+#FIREBASE SETTINGS
+
+# FIREBASE_PROJECT_ID = os.environ.get('FIREBASE_PROJECT_ID', default=None)
+# FIREBASE_STORAGE_BUCKET = os.environ.get('FIREBASE_STORAGE_BUCKET', default=None)
+
 
 # Database
 # https://docs.djangoproject.com/en/3.2/ref/settings/#databases
