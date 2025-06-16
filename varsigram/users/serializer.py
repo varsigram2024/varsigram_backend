@@ -25,8 +25,8 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'is_deleted', 'is_verified']
 
     def get_display_name(self, obj):
-        if obj.get_display_name(self):
-            return obj.get_display_name(self)
+        if obj.get_display_name():
+            return obj.get_display_name()
         return obj.email
 
 class StudentRegisterSerializer(serializers.ModelSerializer):
