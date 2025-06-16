@@ -25,7 +25,9 @@ class UserSerializer(serializers.ModelSerializer):
     
     def get_display_name(self, obj):
         """ Get the display name for the user """
-        return obj.display_name if obj.display_name else obj.email 
+        if obj.display_name:
+            return obj.display_name
+        return obj.email
 
 
 class StudentRegisterSerializer(serializers.ModelSerializer):
