@@ -8,7 +8,8 @@ from .views import (
     UserDeactivateView, UserReactivateView,
     VerifyOTPView, SendOTPView,
     CheckUserVerification,
-    GetSignedUploadUrlView
+    GetSignedUploadUrlView,
+    PublicProfileView
 )
 
 urlpatterns = [
@@ -29,4 +30,5 @@ urlpatterns = [
     path('verify-otp/', VerifyOTPView.as_view(), name='verify-otp'),
     path('check-verification/', CheckUserVerification.as_view(), name='check-verification'),
     path('get-signed-upload-url/', GetSignedUploadUrlView.as_view(), name='get-signed-upload-url'),
+    path('profile/<slug:slug>/', PublicProfileView.as_view(), name='public-profile'),
 ]

@@ -421,6 +421,28 @@ class GetSignedUploadUrlView(APIView):
             # Log the error carefully, avoid exposing sensitive details
             return Response({"error": f"Could not generate signed URL: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+class PublicProfileView(APIView):
+    """
+    Retrieve a user's public profile by display_name_slug.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, slug):
+        # Try to find a student with this slug
+        student = Student.objects.filter(display_name_slug=slug).first()
+        if student:
+            serializer = StudentProfileSerializer(student)
+            return Response({"profile_type": "student", "profile": serializer.data})
+
+        # Try to find an organization with this slug
+        organization = Organization.objects.filter(display_name_slug=slug).first()
+        if organization:
+            serializer = OrganizationProfileSerializer(organization)
+            return Response({"profile_type": "organization", "profile": serializer.data})
+
+        return Response({"detail": "Profile not found."}, status=404)
+
 # class PublicApi(APIView):
 #     authentication_classes = ()
 #     permission_classes = ()

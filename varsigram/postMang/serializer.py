@@ -1,63 +1,3 @@
-# from rest_framework import serializers
-# from .models import Post, Comment, Like, Share, Follow
-# from users.serializer import UserSerializer, OrganizationProfileSerializer, StudentProfileSerializer
-
-# class PostSerializer(serializers.ModelSerializer):
-#     user = serializers.ReadOnlyField(source='user.username')
-#     comments = serializers.SerializerMethodField()
-#     likes_count = serializers.SerializerMethodField()
-
-#     class Meta:
-#         model = Post
-#         fields = ['id', 'user', 'content', 'slug', 'created_at', 'updated_at', 'comments', 'likes_count']
-
-#     def get_comments(self, obj):
-#         comments = Comment.objects.filter(post=obj)
-#         return CommentSerializer(comments, many=True).data
-
-#     def get_likes_count(self, obj):
-#         return Like.objects.filter(post=obj).count()
-
-# class CommentSerializer(serializers.ModelSerializer):
-#     user = serializers.ReadOnlyField(source='user.username')
-
-#     class Meta:
-#         model = Comment
-#         fields = ['id', 'user', 'post', 'content', 'created_at']
-
-# class LikeSerializer(serializers.ModelSerializer):
-#     user = serializers.ReadOnlyField(source='user.username')
-
-#     class Meta:
-#         model = Like
-#         fields = ['id', 'user', 'post']
-
-# class ShareSerializer(serializers.ModelSerializer):
-#     user = UserSerializer(read_only=True)
-#     post = PostSerializer(read_only=True)  # Serialize the full post data
-#     class Meta:
-#         model = Share
-#         fields = ('id', 'user', 'post', 'shared_at')
-
-# class FollowSerializer(serializers.ModelSerializer):
-#     organization = OrganizationProfileSerializer(read_only=True)
-#     student = StudentProfileSerializer(read_only=True)
-
-#     class Meta:
-#         model = Follow
-#         fields = ('id', 'organization', 'student', 'created_at')
-#         read_only_fields = ('created_at',)
-
-# class FollowingSerializer(serializers.ModelSerializer):
-#     organization = OrganizationProfileSerializer(read_only=True)
-
-#     class Meta:
-#         model = Follow
-#         fields = ('organization', 'created_at')
-#         read_only_fields = ('created_at',)
-
-
-# your_app/serializers.py
 from datetime import datetime, timezone
 from users.serializer import UserSerializer, OrganizationProfileSerializer, StudentProfileSerializer
 from .models import Post, Comment, Like, Share, Follow
@@ -167,16 +107,15 @@ class FirestorePostOutputSerializer(serializers.Serializer):
             authors_map = self.context.get('authors_map')
             if authors_map and str(author_id) in authors_map:
                 author = authors_map[str(author_id)]
-                # Use 'display_name' first, fallback to 'email' if display_name is not set
-                ret['author_display_name'] = author.display_name if author.display_name else author.email
-                ret['author_profile_pic_url'] = author.profile_pic_url
+                ret['author_display_name_slug'] = author.get('display_name_slug')
+                ret['author_profile_pic_url'] = author.get('profile_pic_url')
             else:
                 # Fallback if author not in map (e.g., deleted user or not prefetched)
                 logging.warning(f"Author with PostgreSQL ID {author_id} not found in authors_map for post {ret.get('id')}.")
-                ret['author_display_name'] = "Unknown User"
+                ret['author_display_name_slug'] = "Unknown User"
                 ret['author_profile_pic_url'] = None
         else:
-            ret['author_display_name'] = "Unknown User"
+            ret['author_display_name_slug'] = "Unknown User"
             ret['author_profile_pic_url'] = None
 
         # The 'has_liked' field should already be present in 'instance' (the post_data dict)

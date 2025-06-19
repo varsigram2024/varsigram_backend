@@ -270,23 +270,28 @@ class FeedView(generics.ListAPIView):
                 post['has_liked'] = False
         
         return final_posts
-
+    
     def list(self, request, *args, **kwargs):
         posts_data = self.get_queryset()
 
-        # --- OPTIMIZATION 1: Pre-fetch author details from PostgreSQL ---
-        # Get all unique author_ids from the posts data
         author_ids = list(set(str(post['author_id']) for post in posts_data if 'author_id' in post))
-
-        # Fetch all necessary user objects in a single query
-        # Use .in_bulk() or filter(id__in=...) to get them as a dictionary for easy lookup
-        # Ensure your User model has 'profile_pic_url'
         authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url')
-        authors_map = {str(author.id): author for author in authors_from_postgres}
+        authors_map = {}
+        for author in authors_from_postgres:
+            display_name_slug = None
+            if hasattr(author, 'student') and author.student.display_name_slug:
+                display_name_slug = author.student.display_name_slug
+            elif hasattr(author, 'organization') and author.organization.display_name_slug:
+                display_name_slug = author.organization.display_name_slug
 
-        # Pass this map to the serializer context
-        serializer = self.get_serializer(posts_data, many=True, context={'authors_map': authors_map, 'request': request})
+            authors_map[str(author.id)] = {
+                "id": author.id,
+                "email": author.email,
+                "profile_pic_url": author.profile_pic_url,
+                "display_name_slug": display_name_slug,
+            }
 
+        serializer = self.get_serializer(posts_data, many=True, context={'authors_map': authors_map})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -312,31 +317,43 @@ class PostListCreateFirestoreView(APIView):
     def get(self, request):
         try:
             posts_ref = db.collection('posts').order_by('timestamp', direction=firestore.Query.DESCENDING)
-            # Add pagination logic here (e.g., limit, start_after) as discussed previously
-
             docs = posts_ref.stream()
             posts_list = []
-            post_ids = [] # To collect post IDs for 'has_liked' and potential user hydration
+            author_ids = set()
 
             for doc in docs:
                 post_data = doc.to_dict()
                 post_data['id'] = doc.id
                 posts_list.append(post_data)
-                post_ids.append(doc.id) # Collect post IDs
-            
-            # --- Optional: Determine 'has_liked' for current user ---
-            # This is where the 'has_liked' flag is set based on the authenticated user.
-            # This logic can be resource-intensive for many posts without proper indexing/structure.
-            if request.user.is_authenticated and post_ids:
+                if 'author_id' in post_data:
+                    author_ids.add(str(post_data['author_id']))
+
+            # Hydrate authors_map with display_name_slug
+            authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url')
+            authors_map = {}
+            for author in authors_from_postgres:
+                display_name_slug = None
+                if hasattr(author, 'student') and author.student.display_name_slug:
+                    display_name_slug = author.student.display_name_slug
+                elif hasattr(author, 'organization') and author.organization.display_name_slug:
+                    display_name_slug = author.organization.display_name_slug
+
+                authors_map[str(author.id)] = {
+                    "id": author.id,
+                    "email": author.email,
+                    "profile_pic_url": author.profile_pic_url,
+                    "display_name_slug": display_name_slug,
+                }
+
+            # Add has_liked logic if needed (as you already have)
+            if request.user.is_authenticated and posts_list:
                 user_id = str(request.user.id)
                 for post in posts_list:
-                    # Check if a 'like' document exists for this user in the post's 'likes' subcollection
                     like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
-                    post['has_liked'] = like_doc_ref.get().exists # Add 'has_liked' to the dictionary
+                    post['has_liked'] = like_doc_ref.get().exists
 
-            # --- Serialize the list of posts ---
-            # The 'many=True' argument is crucial here because we're serializing a list.
-            serializer = FirestorePostOutputSerializer(posts_list, many=True)
+            # Pass authors_map to serializer context
+            serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": f"Failed to retrieve posts: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -403,7 +420,45 @@ class PostDetailFirestoreView(APIView):
 
         if post_data:
             post_data['id'] = doc_ref.id
-            # Handle 'has_liked' here if needed for detail view
+
+            # Hydrate author info
+            author_id = str(post_data.get('author_id'))
+            author_info = None
+            if author_id:
+                try:
+                    author = User.objects.only('id', 'email', 'profile_pic_url').get(id=author_id)
+                    display_name_slug = None
+                    if hasattr(author, 'student') and author.student.display_name_slug:
+                        display_name_slug = author.student.display_name_slug
+                    elif hasattr(author, 'organization') and author.organization.display_name_slug:
+                        display_name_slug = author.organization.display_name_slug
+
+                    author_info = {
+                        "id": author.id,
+                        "email": author.email,
+                        "profile_pic_url": author.profile_pic_url,
+                        "display_name_slug": display_name_slug,
+                    }
+                except User.DoesNotExist:
+                    author_info = {
+                        "id": author_id,
+                        "email": None,
+                        "profile_pic_url": None,
+                        "display_name_slug": None,
+                    }
+            else:
+                author_info = None
+
+            post_data['author_display_name_slug'] = author_info['display_name_slug'] if author_info else None
+            post_data['author_profile_pic_url'] = author_info['profile_pic_url'] if author_info else None
+
+            # Add has_liked
+            post_data['has_liked'] = False
+            if request.user.is_authenticated:
+                user_id = str(request.user.id)
+                like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(user_id)
+                post_data['has_liked'] = like_doc_ref.get().exists
+
             return Response(post_data, status=status.HTTP_200_OK)
         return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -763,41 +818,14 @@ class TrendingPostsFirestoreView(generics.ListAPIView):
             return [] 
 
     def list(self, request, *args, **kwargs):
-        posts_data = self.get_queryset() # This now returns a list of dictionaries
+        posts_data = self.get_queryset()
 
-        # --- Optimize 'has_liked' check for authenticated users ---
-        # Fetch all likes for the current user once, if authenticated.
-        user_liked_post_ids = set()
-        if request.user.is_authenticated:
-            user_id = str(request.user.id)
-            try:
-                # Query all posts liked by the current user within the trending set
-                # (This is more efficient than N separate subcollection reads if your liked_posts are stored this way)
-                # Alternative: If you have a 'users/{user_id}/liked_posts' collection
-                # liked_docs = db.collection('users').document(user_id).collection('liked_posts').stream()
-                # user_liked_post_ids = {doc.id for doc in liked_docs}
-
-                # If 'likes' are only subcollections of posts, you still need per-post check,
-                # but we'll try to optimize by creating a list of promises if using async,
-                # or just acknowledge the N reads for now. The previous per-post read is often
-                # the most straightforward for a list that isn't excessively long (e.g., < 50 posts).
-                
-                # For this synchronous view, the per-post check is still the most direct.
-                # However, the previous comment was about the *overall* scalability if this list
-                # could become huge (e.g., hundreds or thousands of trending posts).
-                # For a reasonable limit like 20, the current approach is fine.
-                pass # The check is done below in the loop.
-            except Exception as e:
-                logging.warning(f"Could not fetch liked posts for user {user_id}: {e}")
-                # user_liked_post_ids remains empty
-        
-        # Iterate through the fetched posts and add 'has_liked' status
+        # Add has_liked status (already in your code)
         for post in posts_data:
-            post_id = post.get('id') # Already included in get_queryset
+            post_id = post.get('id')
             if request.user.is_authenticated:
                 user_id = str(request.user.id)
                 try:
-                    # Perform the individual subcollection read for has_liked
                     like_doc = db.collection('posts').document(post_id).collection('likes').document(user_id).get()
                     post['has_liked'] = like_doc.exists
                 except Exception as e:
@@ -806,9 +834,28 @@ class TrendingPostsFirestoreView(generics.ListAPIView):
             else:
                 post['has_liked'] = False
 
-        # Use the serializer to format the output
-        serializer = self.get_serializer(posts_data, many=True)
+        # --- Hydrate author info ---
+        author_ids = list(set(str(post['author_id']) for post in posts_data if 'author_id' in post))
+        authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url')
+        authors_map = {}
+        for author in authors_from_postgres:
+            display_name_slug = None
+            if hasattr(author, 'student') and author.student.display_name_slug:
+                display_name_slug = author.student.display_name_slug
+            elif hasattr(author, 'organization') and author.organization.display_name_slug:
+                display_name_slug = author.organization.display_name_slug
+
+            authors_map[str(author.id)] = {
+                "id": author.id,
+                "email": author.email,
+                "profile_pic_url": author.profile_pic_url,
+                "display_name_slug": display_name_slug,
+            }
+
+        # --- Serialize with authors_map ---
+        serializer = self.get_serializer(posts_data, many=True, context={'authors_map': authors_map})
         return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 class SharePostFirestoreView(APIView):
     """
@@ -885,40 +932,48 @@ class UserPostsFirestoreView(APIView):
     """
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
-    def get(self, request, user_id): # Now expecting user_id directly
-        target_user_id = user_id # Directly use the user_id from the URL
+    def get(self, request, user_id):
+        target_user_id = user_id
 
         try:
-            # 1. Fetch posts for the identified user_id
             posts_ref = db.collection('posts')
-            # Assuming 'author_id' field in your 'posts' collection stores the user_id
             posts_query = posts_ref.where('author_id', '==', target_user_id).order_by('timestamp', direction=firestore.Query.DESCENDING).stream()
             
             posts_list = []
-            
-            # 2. Process posts and determine 'has_liked'
-            current_user_id = None
-            if request.user.is_authenticated:
-                current_user_id = str(request.user.id) # Get current authenticated user's ID
+            current_user_id = str(request.user.id) if request.user.is_authenticated else None
 
             for doc in posts_query:
                 post_data = doc.to_dict()
-                post_data['id'] = doc.id # Include the document ID
-                
-                post_data['has_liked'] = False # Default to False
-                if current_user_id: # Only check if the requesting user is authenticated
-                    # Check if a 'like' document exists for the current user in the post's 'likes' subcollection
+                post_data['id'] = doc.id
+                post_data['has_liked'] = False
+                if current_user_id:
                     like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
                     post_data['has_liked'] = like_doc_ref.get().exists
-                
                 posts_list.append(post_data)
 
-            # 3. Serialize the list of posts
-            serializer = FirestorePostOutputSerializer(posts_list, many=True)
+            # Hydrate author info for the target user
+            authors_map = {}
+            try:
+                author = User.objects.only('id', 'email', 'profile_pic_url').get(id=target_user_id)
+                display_name_slug = None
+                if hasattr(author, 'student') and author.student.display_name_slug:
+                    display_name_slug = author.student.display_name_slug
+                elif hasattr(author, 'organization') and author.organization.display_name_slug:
+                    display_name_slug = author.organization.display_name_slug
+
+                authors_map[str(author.id)] = {
+                    "id": author.id,
+                    "email": author.email,
+                    "profile_pic_url": author.profile_pic_url,
+                    "display_name_slug": display_name_slug,
+                }
+            except User.DoesNotExist:
+                pass
+
+            serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         except Exception as e:
-            # Catch broader exceptions like Firestore errors or network issues
             print(f"Error retrieving user posts: {e}")
             return Response({"error": f"Failed to retrieve posts for user: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
