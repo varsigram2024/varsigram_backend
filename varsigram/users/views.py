@@ -272,6 +272,7 @@ class UserSearchView(generics.GenericAPIView):
                     user_data.append({
                         'email': user.email,
                         'organization_name': organization.organization_name,
+                        'display_name_slug': organization.display_name_slug,
                     })
         
         # If no 'type' is specified, return all users (students + organizations)
@@ -291,6 +292,7 @@ class UserSearchView(generics.GenericAPIView):
                     user_data.append({
                         'email': user.email,
                         'organization_name': organization.organization_name,
+                        'display_name_slug': organization.display_name_slug,
                     })
 
         return Response(user_data, status=status.HTTP_200_OK)
