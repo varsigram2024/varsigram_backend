@@ -351,7 +351,9 @@ class PostListCreateFirestoreView(APIView):
                 for post in posts_list:
                     like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
                     post['has_liked'] = like_doc_ref.get().exists
-
+            
+            print("Author IDs in posts:", [post.get('author_id') for post in posts_list])
+            print("Authors map keys:", list(authors_map.keys()))
             # Pass authors_map to serializer context
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
             return Response(serializer.data, status=status.HTTP_200_OK)
