@@ -279,16 +279,20 @@ class FeedView(generics.ListAPIView):
         authors_map = {}
         for author in authors_from_postgres:
             author_name = None
-            if hasattr(author, 'student') and author.student.name:
+            display_name_slug = None
+            if hasattr(author, 'student'):
                 author_name = author.student.name
-            elif hasattr(author, 'organization') and author.organization.organization_name:
+                display_name_slug = getattr(author.student, 'display_name_slug', None)
+            elif hasattr(author, 'organization'):
                 author_name = author.organization.organization_name
+                display_name_slug = getattr(author.organization, 'display_name_slug', None)
 
             authors_map[str(author.id)] = {
                 "id": author.id,
                 "email": author.email,
                 "profile_pic_url": author.profile_pic_url,
                 "name": author_name,
+                "display_name_slug": display_name_slug,
             }
 
         serializer = self.get_serializer(posts_data, many=True, context={'authors_map': authors_map})
@@ -333,16 +337,20 @@ class PostListCreateFirestoreView(APIView):
             authors_map = {}
             for author in authors_from_postgres:
                 author_name = None
-                if hasattr(author, 'student') and author.student.name:
+                display_name_slug = None
+                if hasattr(author, 'student'):
                     author_name = author.student.name
-                elif hasattr(author, 'organization') and author.organization.organization_name:
+                    display_name_slug = getattr(author.student, 'display_name_slug', None)
+                elif hasattr(author, 'organization'):
                     author_name = author.organization.organization_name
+                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
 
                 authors_map[str(author.id)] = {
                     "id": author.id,
                     "email": author.email,
                     "profile_pic_url": author.profile_pic_url,
                     "name": author_name,
+                    "display_name_slug": display_name_slug,
                 }
 
             # Add has_liked logic if needed (as you already have)
@@ -605,14 +613,36 @@ class CommentListFirestoreView(APIView):
 
         try:
             comments_ref = post_ref.collection('comments').order_by('timestamp', direction=firestore.Query.ASCENDING)
-            # Add pagination if needed
             docs = comments_ref.stream()
             comments_list = []
+            author_ids = set()
             for doc in docs:
                 comment_data = doc.to_dict()
                 comment_data['id'] = doc.id
                 comments_list.append(comment_data)
-           
+                if 'author_id' in comment_data:
+                    author_ids.add(str(comment_data['author_id']))
+
+            # Hydrate authors_map
+            authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url')
+            authors_map = {}
+            for author in authors_from_postgres:
+                author_name = None
+                display_name_slug = None
+                if hasattr(author, 'student'):
+                    author_name = author.student.name
+                    display_name_slug = getattr(author.student, 'display_name_slug', None)
+                elif hasattr(author, 'organization'):
+                    author_name = author.organization.organization_name
+                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
+                authors_map[str(author.id)] = {
+                    "id": author.id,
+                    "name": author_name,
+                    "display_name_slug": display_name_slug,
+                }
+
+            serializer = FirestoreCommentSerializer(comments_list, many=True, context={'authors_map': authors_map})
+            return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": f"Failed to retrieve comments: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -841,16 +871,20 @@ class TrendingPostsFirestoreView(generics.ListAPIView):
         authors_map = {}
         for author in authors_from_postgres:
             author_name = None
-            if hasattr(author, 'student') and author.student.name:
+            display_name_slug = None
+            if hasattr(author, 'student'):
                 author_name = author.student.name
-            elif hasattr(author, 'organization') and author.organization.organization_name:
+                display_name_slug = getattr(author.student, 'display_name_slug', None)
+            elif hasattr(author, 'organization'):
                 author_name = author.organization.organization_name
+                display_name_slug = getattr(author.organization, 'display_name_slug', None)
 
             authors_map[str(author.id)] = {
                 "id": author.id,
                 "email": author.email,
                 "profile_pic_url": author.profile_pic_url,
                 "name": author_name,
+                "display_name_slug": display_name_slug,
             }
 
         # --- Serialize with authors_map ---

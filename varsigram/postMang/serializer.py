@@ -26,12 +26,25 @@ class FirestorePostUpdateSerializer(serializers.Serializer):
     # other fields that can be updated
 
 class FirestoreCommentSerializer(serializers.Serializer):
+    id = serializers.CharField(read_only=True)
+    author_id = serializers.CharField(read_only=True)
+    author_name = serializers.CharField(read_only=True, required=False, allow_null=True)
+    author_display_name_slug = serializers.CharField(read_only=True, required=False, allow_null=True)
     text = serializers.CharField(max_length=2000)
+    timestamp = serializers.DateTimeField(read_only=True, required=False, allow_null=True)
 
-    def validate_text(self, value):
-        if not value.strip():
-            raise serializers.ValidationError("Comment text cannot be empty.")
-        return value
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        author_id = ret.get('author_id')
+        authors_map = self.context.get('authors_map', {})
+        if author_id and str(author_id) in authors_map:
+            author = authors_map[str(author_id)]
+            ret['author_name'] = author.get('name')
+            ret['author_display_name_slug'] = author.get('display_name_slug')
+        else:
+            ret['author_name'] = "Unknown User"
+            ret['author_display_name_slug'] = None
+        return ret
 
 class FirestoreLikeOutputSerializer(serializers.Serializer):
     """
@@ -88,6 +101,8 @@ class FirestorePostOutputSerializer(serializers.Serializer):
     # If last_engagement_at is a Firestore Timestamp, it will be a datetime object in Python
     last_engagement_at = serializers.DateTimeField(required=False, allow_null=True)
 
+    author_display_name_slug = serializers.CharField(read_only=True, help_text="The display_name_slug of the post's author (denormalized).", required=False, allow_null=True)
+
     # You might need to add a custom method for representation if your Firestore
     # data structure doesn't directly map to these fields (e.g., nested author info)
     def to_representation(self, instance):
@@ -110,13 +125,16 @@ class FirestorePostOutputSerializer(serializers.Serializer):
                 author = authors_map[str(author_id)]
                 ret['author_name'] = author.get('name')
                 ret['author_profile_pic_url'] = author.get('profile_pic_url')
+                ret['author_display_name_slug'] = author.get('display_name_slug')
             else:
                 logging.warning(f"Author with PostgreSQL ID {author_id} not found in authors_map for post {ret.get('id')}.")
                 ret['author_name'] = "Unknown User"
                 ret['author_profile_pic_url'] = None
+                ret['author_display_name_slug'] = None
         else:
             ret['author_name'] = "Unknown User"
             ret['author_profile_pic_url'] = None
+            ret['author_display_name_slug'] = None
 
         return ret
 
