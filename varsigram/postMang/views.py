@@ -1014,9 +1014,10 @@ class WhoToFollowView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        user = request.user
         try:
             print("I started fetching who to follow")
-            student = Student.objects.select_related('user').get(user=self.request.user)
+            student = Student.objects.select_related('user').get(user=user)
             print("I am here")
             print(f"Fetching recommendations for student: {student.user.email}")
             followed_org_ids = Follow.objects.filter(student=student).values_list('organization_id', flat=True)
@@ -1036,7 +1037,7 @@ class WhoToFollowView(APIView):
             # Recommend orgs whose name or bio matches any keyword
             query = Q()
             for kw in keywords:
-                query |= Q(organization_name__icontains=kw) | Q(bio__icontains=kw)
+                query |= Q(organization_name__icontains=kw) | Q(user__bio__icontains=kw)
             recommended_orgs = Organization.objects.filter(query).exclude(id__in=followed_org_ids)
 
             # Combine and remove duplicates
@@ -1048,7 +1049,7 @@ class WhoToFollowView(APIView):
                     "name": org.organization_name,
                     "display_name_slug": org.display_name_slug,
                     "profile_pic_url": getattr(org, "profile_pic_url", None),
-                    "bio": getattr(org, "bio", None),
+                    "bio": org.user.bio if hasattr(org, 'user') else None,
                 }
                 for org in all_recommended
             ]
