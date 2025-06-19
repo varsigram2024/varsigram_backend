@@ -471,11 +471,11 @@ class PostDetailFirestoreView(APIView):
             return Response(post_data, status=status.HTTP_200_OK)
         return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    def put(self, request, post_identifier):
+    def put(self, request, post_id):
         if not request.user.is_authenticated:
             return Response({"error": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
 
-        doc_ref, post_data = self.get_post_doc_and_data(post_identifier)
+        doc_ref, post_data = self.get_post_doc_and_data(post_id)
         if not post_data:
             return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -497,11 +497,11 @@ class PostDetailFirestoreView(APIView):
                 return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    def delete(self, request, post_identifier):
+    def delete(self, request, post_id):
         if not request.user.is_authenticated:
             return Response({"error": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
 
-        doc_ref, post_data = self.get_post_doc_and_data(post_identifier)
+        doc_ref, post_data = self.get_post_doc_and_data(post_id)
         if not post_data:
             return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
 
