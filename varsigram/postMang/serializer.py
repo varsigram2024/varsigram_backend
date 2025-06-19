@@ -103,10 +103,13 @@ class FirestorePostOutputSerializer(serializers.Serializer):
 
         # Fetch author details from PostgreSQL using author_id from context
         author_id = ret.get('author_id')
+        print(f"Author ID for post {ret.get('id')}: {author_id}")  # Debugging line to check author_id
         if author_id:
             authors_map = self.context.get('authors_map')
+            print(f"Authors map in context: {authors_map}")  # Debugging line to check authors_map
             if authors_map and str(author_id) in authors_map:
                 author = authors_map[str(author_id)]
+                print(f"Author found in map: {author}")
                 ret['author_display_name_slug'] = author.get('display_name_slug')
                 ret['author_profile_pic_url'] = author.get('profile_pic_url')
             else:
