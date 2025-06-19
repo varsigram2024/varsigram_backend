@@ -281,8 +281,8 @@ class FeedView(generics.ListAPIView):
             author_name = None
             if hasattr(author, 'student') and author.student.name:
                 author_name = author.student.name
-            elif hasattr(author, 'organization') and author.organization.name:
-                author_name = author.organization.name
+            elif hasattr(author, 'organization') and author.organization.organization_name:
+                author_name = author.organization.organization_name
 
             authors_map[str(author.id)] = {
                 "id": author.id,
@@ -335,8 +335,8 @@ class PostListCreateFirestoreView(APIView):
                 author_name = None
                 if hasattr(author, 'student') and author.student.name:
                     author_name = author.student.name
-                elif hasattr(author, 'organization') and author.organization.name:
-                    author_name = author.organization.name
+                elif hasattr(author, 'organization') and author.organization.organization_name:
+                    author_name = author.organization.organization_name
 
                 authors_map[str(author.id)] = {
                     "id": author.id,
@@ -432,8 +432,8 @@ class PostDetailFirestoreView(APIView):
                     author_name = None
                     if hasattr(author, 'student') and author.student.name:
                         author_name = author.student.name
-                    elif hasattr(author, 'organization') and author.organization.name:
-                        author_name = author.organization.name
+                    elif hasattr(author, 'organization') and author.organization.organization_name:
+                        author_name = author.organization.organization_name
 
                     author_info = {
                         "id": author.id,
@@ -843,8 +843,8 @@ class TrendingPostsFirestoreView(generics.ListAPIView):
             author_name = None
             if hasattr(author, 'student') and author.student.name:
                 author_name = author.student.name
-            elif hasattr(author, 'organization') and author.organization.name:
-                author_name = author.organization.name
+            elif hasattr(author, 'organization') and author.organization.organization_name:
+                author_name = author.organization.organization_name
 
             authors_map[str(author.id)] = {
                 "id": author.id,
@@ -959,8 +959,8 @@ class UserPostsFirestoreView(APIView):
                 author_name = None
                 if hasattr(author, 'student') and author.student.name:
                     author_name = author.student.name
-                elif hasattr(author, 'organization') and author.organization.name:
-                    author_name = author.organization.name
+                elif hasattr(author, 'organization') and author.organization.organization_name:
+                    author_name = author.organization.organization_name
 
                 authors_map[str(author.id)] = {
                     "id": author.id,
