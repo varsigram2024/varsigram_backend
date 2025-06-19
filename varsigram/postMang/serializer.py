@@ -59,6 +59,7 @@ class FirestorePostOutputSerializer(serializers.Serializer):
     This is an OUTPUT (read-only) serializer, meant for displaying post data.
     """
     id = serializers.CharField(read_only=True, help_text="The Firestore document ID of the post.")
+    author_id = serializers.CharField(read_only=True, help_text="The ID of the post's author (denormalized).")
     author_display_name_slug = serializers.CharField(read_only=True, help_text="The display name slug of the post's author (denormalized).")
     author_profile_pic_url = serializers.URLField(read_only=True, allow_null=True, allow_blank=True)
     content = serializers.CharField(read_only=True, help_text="The main text content of the post.")

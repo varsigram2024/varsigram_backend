@@ -371,7 +371,7 @@ class PostListCreateFirestoreView(APIView):
             try:
                 post_payload = {
                     'author_id': str(request.user.id), # Link to Django User ID
-                    'author_username': request.user.email, # Denormalize for convenience
+                    # 'author_email': request.user.email, # Denormalize for convenience
                     'content': data['content'],
                     'slug': data.get('slug', ''), # Handle slug generation if needed
                     'timestamp': firestore.SERVER_TIMESTAMP,
