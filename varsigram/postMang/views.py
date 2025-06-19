@@ -61,10 +61,8 @@ class UnfollowOrganizationView(generics.DestroyAPIView):
             organization = Organization.objects.get(display_name_slug=organization_display_name_slug)
             student = Student.objects.get(user=self.request.user)
             return Follow.objects.get(student=student, organization=organization)
-        except Organization.DoesNotExist:
-            return None
-        except Follow.DoesNotExist:
-            return None
+        except (Organization.DoesNotExist, Student.DoesNotExist, Follow.DoesNotExist):
+            raise Http404("Follow relationship not found.")
 
 
 class FollowingOrganizationsView(generics.ListAPIView):
@@ -1011,4 +1009,47 @@ class UserPostsFirestoreView(APIView):
         except Exception as e:
             print(f"Error retrieving user posts: {e}")
             return Response({"error": f"Failed to retrieve posts for user: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class WhoToFollowView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        try:
+            student = Student.objects.select_related('user').get(user=request.user)
+            followed_org_ids = Follow.objects.filter(student=student).values_list('organization_id', flat=True)
+
+            # Build a list of keywords from student info
+            keywords = []
+            if student.department:
+                keywords.append(student.department)
+            if student.faculty:
+                keywords.append(student.faculty)
+            if student.religion:
+                keywords.append(student.religion)
+
+            # Start with exclusive orgs
+            exclusive_orgs = Organization.objects.filter(exclusive=True)
+
+            # Recommend orgs whose name or bio matches any keyword
+            query = Q()
+            for kw in keywords:
+                query |= Q(organization_name__icontains=kw) | Q(bio__icontains=kw)
+            recommended_orgs = Organization.objects.filter(query).exclude(id__in=followed_org_ids)
+
+            # Combine and remove duplicates
+            all_recommended = (exclusive_orgs | recommended_orgs).distinct().exclude(id__in=followed_org_ids)[:20]
+
+            orgs_data = [
+                {
+                    "id": org.id,
+                    "name": org.organization_name,
+                    "display_name_slug": org.display_name_slug,
+                    "profile_pic_url": getattr(org, "profile_pic_url", None),
+                    "bio": getattr(org, "bio", None),
+                }
+                for org in all_recommended
+            ]
+            return Response(orgs_data, status=status.HTTP_200_OK)
+        except Student.DoesNotExist:
+            return Response({"error": "Student profile not found."}, status=status.HTTP_404_NOT_FOUND)
 

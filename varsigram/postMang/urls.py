@@ -3,7 +3,8 @@ from .views import (
     PostListCreateFirestoreView, PostDetailFirestoreView,
     CommentCreateFirestoreView, CommentListFirestoreView,
     LikeToggleFirestoreView, LikeListFirestoreView, FollowingOrganizationsView, OrganizationFollowersView, FollowOrganizationView, UnfollowOrganizationView, SharePostFirestoreView,
-    UserPostsFirestoreView, TrendingPostsFirestoreView, FeedView
+    UserPostsFirestoreView, TrendingPostsFirestoreView, FeedView,
+    WhoToFollowView
 )
 
 urlpatterns = [
@@ -22,4 +23,5 @@ urlpatterns = [
     path('users/<slug:display_name_slug>/unfollow/', UnfollowOrganizationView.as_view(), name='unfollow-organization'),
     path('following/', FollowingOrganizationsView.as_view(), name='following-organizations'),
     path('users/<slug:display_name_slug>/followers/', OrganizationFollowersView.as_view(), name='organization-followers'),
+    path('who-to-follow/', WhoToFollowView.as_view(), name='who-to-follow'),
 ]

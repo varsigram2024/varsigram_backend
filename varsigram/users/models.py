@@ -130,6 +130,8 @@ class Organization(models.Model):
     user = models.OneToOneField(User, on_delete=models.PROTECT, related_name='organization')
     organization_name = models.CharField(max_length=100)
     display_name_slug = models.SlugField(unique=True, blank=True, null=True)
+    exclusive = models.BooleanField(default=False, 
+                                  help_text="If True, all students must see and follow this organization.")
 
     def __str__(self):
         return f"{self.user.email} (Organization)"
