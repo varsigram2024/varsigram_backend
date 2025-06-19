@@ -60,7 +60,7 @@ class FirestorePostOutputSerializer(serializers.Serializer):
     """
     id = serializers.CharField(read_only=True, help_text="The Firestore document ID of the post.")
     author_id = serializers.CharField(read_only=True, help_text="The ID of the post's author (denormalized).")
-    author_display_name_slug = serializers.CharField(read_only=True, help_text="The display name slug of the post's author (denormalized).")
+    author_name = serializers.CharField(read_only=True, help_text="The actual name of the post's author (denormalized).")
     author_profile_pic_url = serializers.URLField(read_only=True, allow_null=True, allow_blank=True)
     content = serializers.CharField(read_only=True, help_text="The main text content of the post.")
     
@@ -104,28 +104,20 @@ class FirestorePostOutputSerializer(serializers.Serializer):
 
         # Fetch author details from PostgreSQL using author_id from context
         author_id = ret.get('author_id')
-        print(f"Author ID for post {ret.get('id')}: {author_id}")  # Debugging line to check author_id
         if author_id:
             authors_map = self.context.get('authors_map')
-            print(f"Authors map in context: {authors_map}")  # Debugging line to check authors_map
             if authors_map and str(author_id) in authors_map:
                 author = authors_map[str(author_id)]
-                print(f"Author found in map: {author}")
-                ret['author_display_name_slug'] = author.get('display_name_slug')
+                ret['author_name'] = author.get('name')
                 ret['author_profile_pic_url'] = author.get('profile_pic_url')
             else:
-                # Fallback if author not in map (e.g., deleted user or not prefetched)
                 logging.warning(f"Author with PostgreSQL ID {author_id} not found in authors_map for post {ret.get('id')}.")
-                ret['author_display_name_slug'] = "Unknown User"
+                ret['author_name'] = "Unknown User"
                 ret['author_profile_pic_url'] = None
         else:
-            ret['author_display_name_slug'] = "Unknown User"
+            ret['author_name'] = "Unknown User"
             ret['author_profile_pic_url'] = None
 
-        # The 'has_liked' field should already be present in 'instance' (the post_data dict)
-        # because it's added in the FeedView.get_queryset before serialization.
-        # So, no change needed here for that.
-        
         return ret
 
 

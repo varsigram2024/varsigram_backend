@@ -278,17 +278,17 @@ class FeedView(generics.ListAPIView):
         authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url')
         authors_map = {}
         for author in authors_from_postgres:
-            display_name_slug = None
-            if hasattr(author, 'student') and author.student.display_name_slug:
-                display_name_slug = author.student.display_name_slug
-            elif hasattr(author, 'organization') and author.organization.display_name_slug:
-                display_name_slug = author.organization.display_name_slug
+            author_name = None
+            if hasattr(author, 'student') and author.student.name:
+                author_name = author.student.name
+            elif hasattr(author, 'organization') and author.organization.name:
+                author_name = author.organization.name
 
             authors_map[str(author.id)] = {
                 "id": author.id,
                 "email": author.email,
                 "profile_pic_url": author.profile_pic_url,
-                "display_name_slug": display_name_slug,
+                "name": author_name,
             }
 
         serializer = self.get_serializer(posts_data, many=True, context={'authors_map': authors_map})
@@ -332,17 +332,17 @@ class PostListCreateFirestoreView(APIView):
             authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url')
             authors_map = {}
             for author in authors_from_postgres:
-                display_name_slug = None
-                if hasattr(author, 'student') and author.student.display_name_slug:
-                    display_name_slug = author.student.display_name_slug
-                elif hasattr(author, 'organization') and author.organization.display_name_slug:
-                    display_name_slug = author.organization.display_name_slug
+                author_name = None
+                if hasattr(author, 'student') and author.student.name:
+                    author_name = author.student.name
+                elif hasattr(author, 'organization') and author.organization.name:
+                    author_name = author.organization.name
 
                 authors_map[str(author.id)] = {
                     "id": author.id,
                     "email": author.email,
                     "profile_pic_url": author.profile_pic_url,
-                    "display_name_slug": display_name_slug,
+                    "name": author_name,
                 }
 
             # Add has_liked logic if needed (as you already have)
@@ -352,8 +352,8 @@ class PostListCreateFirestoreView(APIView):
                     like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
                     post['has_liked'] = like_doc_ref.get().exists
             
-            print("Author IDs in posts:", [post.get('author_id') for post in posts_list])
-            print("Authors map keys:", list(authors_map.keys()))
+            # print("Author IDs in posts:", [post.get('author_id') for post in posts_list])
+            # print("Authors map keys:", list(authors_map.keys()))
             # Pass authors_map to serializer context
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -429,29 +429,28 @@ class PostDetailFirestoreView(APIView):
             if author_id:
                 try:
                     author = User.objects.only('id', 'email', 'profile_pic_url').get(id=author_id)
-                    display_name_slug = None
-                    if hasattr(author, 'student') and author.student.display_name_slug:
-                        display_name_slug = author.student.display_name_slug
-                    elif hasattr(author, 'organization') and author.organization.display_name_slug:
-                        display_name_slug = author.organization.display_name_slug
+                    author_name = None
+                    if hasattr(author, 'student') and author.student.name:
+                        author_name = author.student.name
+                    elif hasattr(author, 'organization') and author.organization.name:
+                        author_name = author.organization.name
 
                     author_info = {
                         "id": author.id,
                         "email": author.email,
                         "profile_pic_url": author.profile_pic_url,
-                        "display_name_slug": display_name_slug,
+                        "name": author_name,
                     }
                 except User.DoesNotExist:
                     author_info = {
                         "id": author_id,
                         "email": None,
                         "profile_pic_url": None,
-                        "display_name_slug": None,
+                        "name": None,
                     }
             else:
                 author_info = None
-
-            post_data['author_display_name_slug'] = author_info['display_name_slug'] if author_info else None
+            post_data['author_name'] = author_info['name'] if author_info else None
             post_data['author_profile_pic_url'] = author_info['profile_pic_url'] if author_info else None
 
             # Add has_liked
@@ -613,7 +612,7 @@ class CommentListFirestoreView(APIView):
                 comment_data = doc.to_dict()
                 comment_data['id'] = doc.id
                 comments_list.append(comment_data)
-            return Response(comments_list, status=status.HTTP_200_OK)
+           
         except Exception as e:
             return Response({"error": f"Failed to retrieve comments: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -841,17 +840,17 @@ class TrendingPostsFirestoreView(generics.ListAPIView):
         authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url')
         authors_map = {}
         for author in authors_from_postgres:
-            display_name_slug = None
-            if hasattr(author, 'student') and author.student.display_name_slug:
-                display_name_slug = author.student.display_name_slug
-            elif hasattr(author, 'organization') and author.organization.display_name_slug:
-                display_name_slug = author.organization.display_name_slug
+            author_name = None
+            if hasattr(author, 'student') and author.student.name:
+                author_name = author.student.name
+            elif hasattr(author, 'organization') and author.organization.name:
+                author_name = author.organization.name
 
             authors_map[str(author.id)] = {
                 "id": author.id,
                 "email": author.email,
                 "profile_pic_url": author.profile_pic_url,
-                "display_name_slug": display_name_slug,
+                "name": author_name,
             }
 
         # --- Serialize with authors_map ---
@@ -957,17 +956,17 @@ class UserPostsFirestoreView(APIView):
             authors_map = {}
             try:
                 author = User.objects.only('id', 'email', 'profile_pic_url').get(id=target_user_id)
-                display_name_slug = None
-                if hasattr(author, 'student') and author.student.display_name_slug:
-                    display_name_slug = author.student.display_name_slug
-                elif hasattr(author, 'organization') and author.organization.display_name_slug:
-                    display_name_slug = author.organization.display_name_slug
+                author_name = None
+                if hasattr(author, 'student') and author.student.name:
+                    author_name = author.student.name
+                elif hasattr(author, 'organization') and author.organization.name:
+                    author_name = author.organization.name
 
                 authors_map[str(author.id)] = {
                     "id": author.id,
                     "email": author.email,
                     "profile_pic_url": author.profile_pic_url,
-                    "display_name_slug": display_name_slug,
+                    "name": author_name,
                 }
             except User.DoesNotExist:
                 pass
