@@ -84,7 +84,7 @@ class OrganizationRegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Organization
-        fields = ['organization_name']
+        fields = ['organization_name', 'exclusive']
     
     def create(self, validated_data):
         """ Create a new organization """

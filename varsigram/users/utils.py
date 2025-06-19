@@ -22,6 +22,30 @@ def generate_jwt_token(user):
 
 def clean_data(data):
     """ Processes nested student/organization data from a dictionary """
+
+    # Exception if the 'data' is a QueryDict then it turns into a regular dict
+    if isinstance(data, QueryDict):
+        data = data.dict()
+
+        student_data = {}
+        organization_data = {}
+
+        for key, value in data.items():
+            if key.startswith('student.'):
+                student_data[key.replace('student.', '')] = value
+            elif key.startswith('organization.'):
+                organization_data[key.replace('organization.', '')] = value
+
+        if student_data and student_data.get('name'):
+            data['student'] = student_data
+        else:
+            data['student'] = None
+        if organization_data and organization_data.get('organization_name'):
+            data['organization'] = organization_data
+        else:
+            data['organization'] = None
+
+        return data
     # Assuming 'data' is always a dict (JSON payload)
 
     # Ensure student/organization keys exist and are dicts, or set to None
