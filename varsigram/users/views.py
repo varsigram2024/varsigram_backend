@@ -170,13 +170,13 @@ class StudentUpdateView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
-    def put(self, request, *args, **kwargs):
+    def patch(self, request, *args, **kwargs):
         try:
             student = Student.objects.get(user=request.user)
         except Student.DoesNotExist:
             return Response({"detail": "Student profile not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        serializer = StudentUpdateSerializer(student, data=request.data, context={'request': request})
+        serializer = StudentUpdateSerializer(student, data=request.data, context={'request': request}, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -188,13 +188,13 @@ class OrganizationUpdateView(generics.GenericAPIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
-    def put(self, request, *args, **kwargs):
+    def patch(self, request, *args, **kwargs):
         try:
             organization = Organization.objects.get(user=request.user)
         except Organization.DoesNotExist:
             return Response({"detail": "Organization profile not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        serializer = OrganizationUpdateSerializer(organization, data=request.data, context={'request': request})
+        serializer = OrganizationUpdateSerializer(organization, data=request.data, context={'request': request}, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response(serializer.data, status=status.HTTP_200_OK)
