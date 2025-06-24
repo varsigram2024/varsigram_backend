@@ -447,7 +447,7 @@ class GetSignedUploadUrlView(APIView):
         # e.g., 'profile_pictures/<user_id>/<unique_filename>'
         # Or 'organization_logos/<org_id>/<unique_filename>' etc.
         # For simplicity, let's use a single path for now
-        destination_path = f"profile_pictures/{user_id}/{unique_filename}"
+        destination_path = f"profile_pictures%2F{user_id}%2F{unique_filename}"
         
         try:
             # Get the default bucket associated with the initialized Firebase App
