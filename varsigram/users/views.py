@@ -27,6 +27,8 @@ from django.contrib.auth import authenticate, login, logout
 from .tasks import send_otp_email
 from firebase_admin import storage
 from datetime import timedelta
+import os
+from uuid import uuid4
 # import urllib.parse
 
 
@@ -257,6 +259,7 @@ class UserSearchView(generics.GenericAPIView):
                         'faculty': student.faculty,
                         'department': student.department,
                         'name': student.name,
+                        'display_name_slug': student.display_name_slug
                     })
 
         # If searching for Organizations:
@@ -388,40 +391,95 @@ class GetSignedUploadUrlView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        # Validate input: file_name, content_type
-        # You might want to get the original file name and content type from the frontend
-        # For simplicity, let's assume it's passed in the request body
         file_name = request.data.get('file_name')
-        content_type = request.data.get('content_type', 'application/octet-stream')
+        content_type = request.data.get('content_type') # e.g., 'image/jpeg'
 
-        if not file_name:
-            return Response({"error": "file_name is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Generate a unique path for the profile picture
-        # It's good practice to ensure uniqueness and use the Django user ID
-        django_user_id = str(request.user.id)
-        unique_filename = f"{django_user_id}_{file_name}" # You might add a timestamp/UUID here too
-        storage_path = f"profile_pictures/{django_user_id}/{unique_filename}"
-
-        try:
-            bucket = storage.bucket() # Assumes default bucket is initialized
-            blob = bucket.blob(storage_path)
-
-            # Generate a signed URL that allows a PUT request for 15 minutes
-            upload_url = blob.generate_signed_url(
-                version="v4",
-                expiration=timedelta(minutes=15),
-                method="PUT",
-                content_type=content_type, # Ensure this matches what frontend sends
+        if not file_name or not content_type:
+            return Response(
+                {"error": "Both 'file_name' and 'content_type' are required."},
+                status=status.HTTP_400_BAD_REQUEST
             )
-            
+
+        # Validate content_type if you have specific allowed types
+        allowed_content_types = ['image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'video/quicktime'] # Customize
+        if content_type not in allowed_content_types:
+            return Response(
+                {"error": f"Unsupported content type: {content_type}. Allowed types are: {', '.join(allowed_content_types)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Determine the current user (Student or Organization)
+        user = request.user
+        profile_type = None
+        user_id = None
+        
+        # This logic needs to match how your custom User model is linked to Student/Organization
+        # Assuming request.user is your custom User model (e.g., users.User)
+        # and it has related_name accessors like user.student_profile or user.organization_profile
+        
+        try:
+            student_profile = Student.objects.get(user=user)
+            user_id = student_profile.user.id # Or user.id if Student/Organization IS the user model
+            profile_type = 'student'
+        except Student.DoesNotExist:
+            try:
+                organization_profile = Organization.objects.get(user=user)
+                user_id = organization_profile.user.id # Or user.id
+                profile_type = 'organization'
+            except Organization.DoesNotExist:
+                return Response(
+                    {"error": "User profile (Student or Organization) not found."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        if not user_id:
+             return Response(
+                {"error": "Could not determine user ID for profile path."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        # Generate a unique filename to prevent collisions and simplify updates
+        # Get file extension safely
+        _, file_extension = os.path.splitext(file_name)
+        unique_filename = f"{uuid4()}{file_extension}"
+        
+        # Define the storage path in your bucket
+        # e.g., 'profile_pictures/<user_id>/<unique_filename>'
+        # Or 'organization_logos/<org_id>/<unique_filename>' etc.
+        # For simplicity, let's use a single path for now
+        destination_path = f"profile_pictures/{user_id}/{unique_filename}"
+        
+        try:
+            # Get the default bucket associated with the initialized Firebase App
+            # This relies on 'storageBucket' being set during initialize_app in apps.py
+            bucket = storage.bucket() 
+            blob = bucket.blob(destination_path)
+
+            # Generate the signed URL for PUT operation
+            # The 'Content-Type' must be specified here and must match the client's upload header
+            upload_url = blob.generate_signed_url(
+                version='v4',
+                expiration=timedelta(minutes=15),  # URL valid for 15 minutes
+                method='PUT',
+                content_type=content_type, # CRITICAL: This must match frontend's Content-Type header
+            )
+
+            # Optionally, construct a public download URL if you want to store it
+            # public_download_url = f"https://firebasestorage.googleapis.com/v0/b/{bucket.name}/o/{blob.name}?alt=media"
+            # Note: This URL might require public access rules on the bucket if not token-based
+
             return Response({
                 "upload_url": upload_url,
-                "file_path": storage_path # Optional: return path for frontend to construct public URL later
-            })
+                "file_path": destination_path, # Path to the file within the bucket
+                # "public_download_url": public_download_url # Optional
+            }, status=status.HTTP_200_OK)
+
         except Exception as e:
-            # Log the error carefully, avoid exposing sensitive details
-            return Response({"error": f"Could not generate signed URL: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            print(f"Error generating signed URL: {e}")
+            return Response(
+                {"error": f"Could not generate signed URL: {e}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class PublicProfileView(APIView):

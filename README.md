@@ -18,26 +18,24 @@ Most endpoints require authentication. Authentication is handled using token-bas
 
 ### User Authentication and Management
 
-*   **`GET /welcome/` \[name='welcome']**
+*   **`GET /welcome/`**  [name='welcome']
 
     *   Description: Welcomes the user to the API.
     *   Request: `GET`
     *   Response (200 OK):
-
         ```json
         {"message": "Welcome to the API!"}
         ```
 
-*   **`POST /register/` \[name='user register']**
+*   **`POST /register/`**  [name='user register']
 
-    *   Description: Registers a new user.
+    *   Description: Registers a new user (student or organization).
     *   Request: `POST`
     *   Request Body (JSON):
-
         ```json
         {
-            "email": "",
-            "password": "",
+            "email": "user@example.com",
+            "password": "password123",
             "bio": "",
             "student": {
                 "name": "",
@@ -51,167 +49,190 @@ Most endpoints require authentication. Authentication is handled using token-bas
                 "date_of_birth": null
             },
             "organization": {
-                "organization_name": ""
+                "organization_name": "",
+                "exclusive": false
             }
         }
         ```
+    *   Response (201 Created): Returns a JWT token and a success message.
+    *   Response (400 Bad Request): If registration fails (e.g., invalid input, email already exists, both student and organization provided, or neither).
 
-    *   Response (201 Created): Returns user data on successful registration.
-    *   Response (400 Bad Request): Returns error details if registration fails (e.g., invalid input, email already exists).
-
-*   **`POST /login/` \[name='login']**
+*   **`POST /login/`**  [name='login']
 
     *   Description: Logs in an existing user.
     *   Request: `POST`
     *   Request Body (JSON):
-
         ```json
         {
-          "email": "user@example.com",
-          "password": "password123"
+            "email": "user@example.com",
+            "password": "password123"
         }
         ```
+    *   Response (200 OK): Returns a JWT token and a success message.
+    *   Response (401 Unauthorized): If login fails (e.g., incorrect credentials).
 
-    *   Response (200 OK): Returns an authentication token.
-    *   Response (401 Unauthorized): Returns an error if login fails (e.g., incorrect credentials).
-
-*   **`POST /logout/` \[name='logout']**
+*   **`POST /logout/`**  [name='logout']
 
     *   Description: Logs out the current user (invalidates the token).
     *   Request: `POST`
     *   Authentication: Required
-    *   Response (204 No Content): On successful logout.
+    *   Response (200 OK): On successful logout.
 
-*   **`POST /password-reset/` \[name='password-reset']**
+*   **`POST /password-reset/`**  [name='password-reset']
 
     *   Description: Initiates the password reset process by sending a reset link to the user's email.
     *   Request: `POST`
     *   Request Body (JSON):
-
         ```json
         {
-          "email": "user@example.com"
+            "email": "user@example.com"
         }
         ```
+    *   Response (200 OK): On successful email send.
 
-*   **`POST /password-reset-confirm/` \[name='password-reset-confirm']**
+*   **`POST /password-reset-confirm/`**  [name='password-reset-confirm']
 
     *   Description: Confirms the password reset with the provided `uid` and `token` received via email and the new password.
     *   Request: `POST`
-    *   How to use this endpoint:
-        1.  The user requests a password reset using the `/password-reset/` endpoint.
-        2.  The backend sends an email to the user containing a link with the `uid` and `token` as query parameters. The link will have the following format:
-
-            ```
-            <your_frontend_url>/password-reset/confirm/?uid=<uid>&token=<token>
-            ```
-
-            *   `<your_frontend_url>`: This is the URL of your frontend application's password reset confirmation page (e.g., `https://yourwebsite.com/reset-password`).
-            *   `<uid>`: A unique identifier for the user (e.g., base64 encoded user id).
-            *   `<token>`: A unique token generated for this password reset request.
-
-        3.  The user clicks the link in the email. This will navigate them to your frontend's password reset confirmation page, which will extract the `uid` and `token` from the URL's query parameters.
-        4.  The frontend then makes a `POST` request to this `/password-reset-confirm/` endpoint, including the `uid`, `token`, and the new password in the request body.
-
     *   Request Body (JSON):
-
         ```json
         {
-          "uid": "<uid>", // From the URL query parameters
-          "token": "<token>", // From the URL query parameters
-          "new_password": "",
-          "confirm_password": ""
+            "uid": "<uid>",
+            "token": "<token>",
+            "new_password": "",
+            "confirm_password": ""
         }
         ```
-
     *   Response (204 No Content): On successful password reset.
     *   Response (400 Bad Request): If the `uid`, `token`, or new password are invalid or if the reset process fails.
-*   **`PUT /student/update/` \[name='student-update']**
+
+*   **`PUT /student/update/`**  [name='student-update']
 
     *   Description: Updates the authenticated student user's profile.
     *   Request: `PUT`
     *   Authentication: Required
-    *   Request Body (JSON): (Same structure as registration but only the fields to be updated are required)
+    *   Request Body (JSON): (Only the fields to be updated are required)
+    *   Response (200 OK): Returns updated student profile data.
 
-*   **`PUT /organization/update/` \[name='organization-update']**
+*   **`PUT /organization/update/`**  [name='organization-update']
 
     *   Description: Updates the authenticated organization user's profile.
     *   Request: `PUT`
     *   Authentication: Required
-    *   Request Body (JSON): (Same structure as registration but only the fields to be updated are required)
+    *   Request Body (JSON): (Only the fields to be updated are required)
+    *   Response (200 OK): Returns updated organization profile data.
 
-*   **`POST /change-password/` \[name='change-password']**
+*   **`POST /change-password/`**  [name='change-password']
 
     *   Description: Changes the authenticated user's password.
     *   Request: `POST`
     *   Authentication: Required
     *   Request Body (JSON):
-
         ```json
         {
-          "old_password": "old_password123",
-          "new_password": "new_password456"
+            "old_password": "old_password123",
+            "new_password": "new_password456",
+            "confirm_password": "new_password456"
         }
         ```
+    *   Response (200 OK): On successful password change.
 
-*   **`GET /profile/` \[name='user-profile']**
+*   **`GET /profile/`**  [name='user-profile']
 
-    *   Description: Retrieves the authenticated user's profile.
+    *   Description: Retrieves the authenticated user's profile (student or organization).
     *   Request: `GET`
     *   Authentication: Required
-    *   Response (200 OK): Returns user profile data.
+    *   Response (200 OK): Returns user profile data and profile type.
 
-*   **`GET /users/search/?q=<query>` \[name='search']**
+*   **`GET /users/search/?q=<query>`**  [name='search']
 
     *   Description: Searches for users based on a query string.
     *   Request: `GET`
     *   Query Parameters:
         *   `q`: The search query.
+        *   `type`: "student" or "organization" (optional)
+        *   `faculty`, `department`: (optional, for student search)
     *   Response (200 OK): Returns a list of matching users.
 
-*   **`POST /deactivate/` \[name='user-deactivate']**
+*   **`POST /deactivate/`**  [name='user-deactivate']
 
     *   Description: Deactivates the authenticated user's account.
     *   Request: `POST`
     *   Authentication: Required
+    *   Request Body (JSON):
+        ```json
+        {
+            "password": "your_password"
+        }
+        ```
+    *   Response (200 OK): On successful deactivation.
 
-*   **`POST /reactivate/` \[name='user-reactivate']**
+*   **`POST /reactivate/`**  [name='user-reactivate']
 
     *   Description: Reactivates the authenticated user's account.
     *   Request: `POST`
     *   Authentication: Required
+    *   Request Body (JSON):
+        ```json
+        {
+            "password": "your_password"
+        }
+        ```
+    *   Response (200 OK): On successful reactivation.
 
-*   **`POST /send-otp/` \[name='send-otp']**
+*   **`POST /send-otp/`**  [name='send-otp']
 
     *   Description: Sends an OTP to the user's registered email.
     *   Request: `POST`
-    *   Request Body (JSON):
+    *   Authentication: Required
+    *   Response (200 OK): On successful OTP send.
 
-        ```json
-        {
-          "email": "user@example.com"
-        }
-        ```
-
-*   **`POST /verify-otp/` \[name='verify-otp']**
+*   **`POST /verify-otp/`**  [name='verify-otp']
 
     *   Description: Verifies the provided OTP.
     *   Request: `POST`
+    *   Authentication: Required
     *   Request Body (JSON):
-
         ```json
         {
-          "email": "user@example.com",
-          "otp": "123456"
+            "otp": "123456"
         }
         ```
+    *   Response (200 OK): On successful verification.
 
-*   **`GET /check-verification/` \[name='check-verification']**
+*   **`GET /check-verification/`**  [name='check-verification']
 
     *   Description: Checks the verification status of a user.
     *   Request: `GET`
     *   Authentication: Required
     *   Response (200 OK): Returns verification status.
+
+*   **`POST /get-signed-upload-url/`**  [name='get-signed-upload-url']
+
+    *   Description: Returns a signed URL for uploading files (e.g., profile pictures) to Firebase Storage.
+    *   Request: `POST`
+    *   Authentication: Required
+    *   Request Body (JSON):
+        ```json
+        {
+            "file_name": "filename.jpg",
+            "content_type": "image/jpeg"
+        }
+        ```
+    *   Response (200 OK): Returns the signed upload URL and file path.
+
+*   **`GET /profile/<slug:slug>/`**  [name='public-profile']
+
+    *   Description: Retrieves a user's public profile by `display_name_slug`.
+    *   Request: `GET`
+    *   Response (200 OK): Returns the public profile data and profile type.
+
+---
+
+**Note:**  
+- All endpoints that modify or access sensitive data require authentication.
+- Registration requires either a `student` or `organization` object, not both.
+- Passwords must be confirmed where required.
 
 ### Messaging
 
@@ -238,117 +259,103 @@ Most endpoints require authentication. Authentication is handled using token-bas
 
 ### Posts
 
-*   **`GET /posts/` and `POST /posts/` \[name='post-list-create']**
+*   **`GET /posts/`** and **`POST /posts/`**  [name='post-list-create']
 
-    *   Description: Retrieves a list of posts (GET) or creates a new post (POST).
-    *   Request: `GET` or `POST`
-    *   Authentication: Required for `POST`
-    *   Request Body (JSON - for POST):
-
+    *   **GET**: Retrieves a list of posts.
+    *   **POST**: Creates a new post.
+    *   Authentication: Required for POST.
+    *   Request Body (POST, JSON):
         ```json
         {
-            "content": "",
-            "slug": "",
-            "media_urls": [
-                "",
-                "",
-                ""
-            ]
+            "content": "Post content",
+            "slug": "optional-slug",
+            "media_urls": ["url1", "url2"]
         }
         ```
+    *   Response (201 Created): Returns the created post.
 
-*   **`GET /posts/<str:post_id>/` \[name='post-detail']**
+*   **`GET /posts/<str:post_id>/`**  [name='post-detail']
 
-    *   Description: Retrieves a specific post by its id.
-    *   Request: `GET`
+    *   Retrieves a specific post by its ID.
+    *   Request: GET
+    *   Response (200 OK): Returns the post data.
 
+*   **`PUT /posts/<str:post_id>/`**  [name='post-detail']
 
-*   **`POST /posts/<str:post_id>/comments/create/` \[name='post-detail']**
-
-    *   Description: Retrieves a specific post by its id.
-    *   Request: `POST`
-    *   Authentication: Required for `POST`
-    *   Request Body (JSON - for POST):
-
-        ```json
-        {
-            "text": ""
-        }
-        ```
-
-
-*   **`GET /posts/<str:post_id>/comments/` \[name='post-comments']**
-
-    *   Description: Retrieves comments for a specific post.
-    *   Request: `GET`
-
-*   **`POST /posts/<str:post_id>/like/` \[name='post-like']**
-
-    *   Description: Likes a specific post.
-    *   Request: `POST`
-    *   Authentication: Required
-
-*   **`GET /posts/<str:post_id>/likes/` \[name='post-likes-list']**
-
-    *   Description: Retrieves likes for a specific post.
-    *   Request: `GET`
-
-*   **`POST /posts/<str:post_id/share/` \[name='post-share']**
-
-    *   Description: Shares a specific post. Creates a new "Share" entry referencing the original post.
-    *   Request: `POST`
-    *   Authentication: Required
-    *   Response (201 Created): Returns the newly created share object.
-    *   Response (400 Bad Request): If the post has already been shared by the user.
-
-*   **`GET /users/<str:user_id>/posts/` \[name='user-posts']**
-
-    *   Description: Retrieves all posts by a specific user, identified by their `user_id`.
-    *   Request: `GET`
-    *   Response (200 OK): Returns a list of posts.
-    *   Response (404 Not Found): If the user is not found.
-
-*   **`PUT /posts/<str:post_id>/` \[name='post-detail']**
-
-    *   Description: Edits a specific post.
-    *   Request: `PUT`
+    *   Updates a specific post.
     *   Authentication: Required
     *   Request Body (JSON):
-
         ```json
         {
-          "content": "Updated post content",
-          "image": "updated_image_file" (Optional - file upload)
+          "content": "Updated content",
+          "image": "updated_image_file" // Optional, file upload
         }
         ```
+    *   Response (200 OK): Returns the updated post.
 
-*   **`DELETE /posts/<str:post_id>/` \[name='post-detail']**
+*   **`DELETE /posts/<str:post_id>/`**  [name='post-detail']
 
-    *   Description: Deletes a specific post.
-    *   Request: `DELETE`
+    *   Deletes a specific post.
     *   Authentication: Required
     *   Response (204 No Content): On successful deletion.
 
-*   **`GET /posts/search/?q=<query>` \[name='post-search']**
+*   **`GET /posts/<str:post_id>/comments/`**  [name='post-comments']
 
-    *   Description: Searches for posts based on a query string.
-    *   Request: `GET`
+    *   Retrieves comments for a specific post.
+    *   Request: GET
+
+*   **`POST /posts/<str:post_id>/comments/create/`**  [name='post-detail']
+
+    *   Adds a comment to a post.
+    *   Authentication: Required
+    *   Request Body (JSON):
+        ```json
+        {
+            "text": "Comment text"
+        }
+        ```
+    *   Response (201 Created): Returns the created comment.
+
+*   **`POST /posts/<str:post_id>/like/`**  [name='post-like']
+
+    *   Likes a specific post.
+    *   Authentication: Required
+
+*   **`GET /posts/<str:post_id>/likes/`**  [name='post-likes-list']
+
+    *   Retrieves likes for a specific post.
+    *   Request: GET
+
+*   **`POST /posts/<str:post_id>/share/`**  [name='post-share']
+
+    *   Shares a specific post.
+    *   Authentication: Required
+    *   Response (201 Created): Returns the share object.
+
+*   **`GET /users/<str:user_id>/posts/`**  [name='user-posts']
+
+    *   Retrieves all posts by a specific user.
+    *   Request: GET
+<!-- 
+*   **`GET /posts/search/?q=<query>`**  [name='post-search']
+
+    *   Searches for posts based on a query string.
+    *   Request: GET
     *   Query Parameters:
         *   `q`: The search query.
-    *   Response (200 OK): Returns a list of matching posts.
+    *   Response (200 OK): Returns a list of matching posts. -->
 
-*   **`GET /feed/` \[name='feed']**
+*   **`GET /feed/`**  [name='feed']
 
-    *   Description: Retrieves the authenticated user's feed, including posts from followed organizations, posts from users in the same department, faculty, religion, and the user's own posts and shares.
-    *   Request: `GET`
+    *   Retrieves the authenticated user's feed, including posts from followed organizations, users in the same department/faculty/religion, and the user's own posts and shares.
     *   Authentication: Required
     *   Query Parameters:
-        * `shared`: If present, will include shared posts in the feed
+        *   `shared`: If present, includes shared posts in the feed.
 
-*   **`GET /trending/` \[name='trending-posts']**
+*   **`GET /trending/`**  [name='trending-posts']
 
-    *   Description: Retrieves trending posts (based on likes, shares, or other criteria).
-    *   Request: `GET`
+    *   Retrieves trending posts (based on likes, shares, or other criteria).
+    *   Request: GET
     *   Response (200 OK): Returns a list of trending posts.
 
 ### Following/Followers
@@ -383,3 +390,27 @@ Most endpoints require authentication. Authentication is handled using token-bas
     *   Request: `GET`
     *   Authentication: Required
     *   Response (200 OK): Returns a list of followed organizations.
+
+*   **`GET /who-to-follow/` \[name='who-to-follow']**
+
+    *   Description: Returns a list of recommended organizations for the authenticated student to follow. Recommendations are based on the student's department, faculty, religion, and always include exclusive organizations.
+    *   Request: `GET`
+    *   Authentication: Required
+    *   Response (200 OK): Returns a list of recommended organizations, each with:
+        ```json
+        [
+          {
+            "id": 1,
+            "name": "Organization Name",
+            "display_name_slug": "org-slug",
+            "profile_pic_url": "https://...",
+            "bio": "Organization bio"
+          }
+        ]
+        ```
+
+---
+
+**Note:**  
+- All follow/unfollow actions require the user to be authenticated and to be a student.
+- The "Who To Follow" endpoint will always include organizations marked as exclusive, and will not return organizations the student already follows.
