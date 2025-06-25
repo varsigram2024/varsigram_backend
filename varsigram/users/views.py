@@ -447,7 +447,7 @@ class GetSignedUploadUrlView(APIView):
         # e.g., 'profile_pictures/<user_id>/<unique_filename>'
         # Or 'organization_logos/<org_id>/<unique_filename>' etc.
         # For simplicity, let's use a single path for now
-        destination_path = f"profile_pictures%2F{user_id}%2F{unique_filename}"
+        destination_path = f"profile_pictures/{user_id}/{unique_filename}"
         
         try:
             # Get the default bucket associated with the initialized Firebase App
@@ -465,13 +465,15 @@ class GetSignedUploadUrlView(APIView):
             )
 
             # Optionally, construct a public download URL if you want to store it
-            # public_download_url = f"https://firebasestorage.googleapis.com/v0/b/{bucket.name}/o/{blob.name}?alt=media"
-            # Note: This URL might require public access rules on the bucket if not token-based
+            public_download_url = (
+                f"https://firebasestorage.googleapis.com/v0/b/{bucket.name}/o/"
+                f"{destination_path.replace('/', '%2F')}?alt=media"
+            )
 
             return Response({
                 "upload_url": upload_url,
-                "file_path": destination_path, # Path to the file within the bucket
-                # "public_download_url": public_download_url # Optional
+                "file_path": destination_path,  # Path in the bucket
+                "public_download_url": public_download_url  # <-- This is what frontend should save
             }, status=status.HTTP_200_OK)
 
         except Exception as e:

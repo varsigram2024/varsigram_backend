@@ -44,7 +44,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     # username = models.CharField(max_length=150, unique=True, default='default_username')
     bio = models.TextField(blank=True, null=True)
     date_joined = models.DateTimeField(default=timezone.now)
-    profile_pic_url = models.CharField(max_length=500, blank=True, null=True, 
+    profile_pic_url = models.URLField(max_length=500, blank=True, null=True, 
                                       help_text="URL to the user's profile picture in Firebase Storage.")
     is_staff = models.BooleanField(default=False)
     is_deleted = models.BooleanField(default=False)
