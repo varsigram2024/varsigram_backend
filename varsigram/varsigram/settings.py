@@ -218,9 +218,13 @@ FRONTEND_URL = os.environ.get('FRONTEND_URL', '').split(',')
 CORS_ALLOWED_ORIGINS = FRONTEND_URL
 
 # Redis configuration
-CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL','redis://localhost:6379/0')  # URL of your Redis instance
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', default='amqp://guest:guest@localhost:5672//') #For RabbitMQ
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'Africa/Lagos'
+CELERY_ENABLE_UTC = True # Always good practice
+
 
 # For storing task results in the database
 INSTALLED_APPS += ['django_celery_results']

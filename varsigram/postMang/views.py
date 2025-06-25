@@ -1016,10 +1016,10 @@ class WhoToFollowView(APIView):
     def get(self, request):
         user = request.user
         try:
-            print("I started fetching who to follow")
+            # print("I started fetching who to follow")
             student = Student.objects.select_related('user').get(user=user)
-            print("I am here")
-            print(f"Fetching recommendations for student: {student.user.email}")
+            # print("I am here")
+            # print(f"Fetching recommendations for student: {student.user.email}")
             followed_org_ids = Follow.objects.filter(student=student).values_list('organization_id', flat=True)
 
             # Build a list of keywords from student info
