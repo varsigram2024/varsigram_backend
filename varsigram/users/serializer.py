@@ -10,7 +10,7 @@ from django.utils.encoding import force_bytes
 from django.contrib.sites.shortcuts import get_current_site
 from .utils import generate_jwt_token
 from django.conf import settings
-import random
+import os
 from django.utils.timezone import now
 from .tasks import send_reset_email
 
@@ -219,11 +219,10 @@ class PasswordResetSerializer(serializers.Serializer):
         email = self.validated_data['email']
         user = User.objects.get(email=email)
         token = generate_jwt_token(user)
-        current_site = get_current_site(request)
-        domain = current_site.domain
         uid = urlsafe_base64_encode(force_bytes(user.id))
-        reset_link = f"http://{domain}/api/v1/password-reset-confirm/?uid={uid}&token={token}"
+        frontend_url = f"{os.environ.get('DOMAIN')}/reset-password"  # <-- set this to your actual frontend URL
 
+        reset_link = f"{frontend_url}?uid={uid}&token={token}"
         send_reset_email.delay(email, reset_link)
 
 
