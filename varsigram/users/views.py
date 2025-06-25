@@ -401,7 +401,7 @@ class GetSignedUploadUrlView(APIView):
             )
 
         # Validate content_type if you have specific allowed types
-        allowed_content_types = ['image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'video/quicktime'] # Customize
+        allowed_content_types = ['image/jpeg', 'image/png'] # Customize
         if content_type not in allowed_content_types:
             return Response(
                 {"error": f"Unsupported content type: {content_type}. Allowed types are: {', '.join(allowed_content_types)}"},
@@ -504,6 +504,78 @@ class PublicProfileView(APIView):
             return Response({"profile_type": "organization", "profile": serializer.data})
 
         return Response({"detail": "Profile not found."}, status=404)
+
+class GetSignedPostMediaUploadUrlView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        file_name = request.data.get('file_name')
+        content_type = request.data.get('content_type')
+
+        if not file_name or not content_type:
+            return Response(
+                {"error": "Both 'file_name' and 'content_type' are required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        allowed_content_types = [
+            'image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'video/quicktime'
+        ]
+        if content_type not in allowed_content_types:
+            return Response(
+                {"error": f"Unsupported content type: {content_type}. Allowed types are: {', '.join(allowed_content_types)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = request.user
+        user_id = None
+        try:
+            student_profile = Student.objects.get(user=user)
+            user_id = student_profile.user.id
+        except Student.DoesNotExist:
+            try:
+                organization_profile = Organization.objects.get(user=user)
+                user_id = organization_profile.user.id
+            except Organization.DoesNotExist:
+                return Response(
+                    {"error": "User profile (Student or Organization) not found."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        if not user_id:
+            return Response(
+                {"error": "Could not determine user ID for post media path."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        _, file_extension = os.path.splitext(file_name)
+        unique_filename = f"{uuid4()}{file_extension}"
+        destination_path = f"post_media/{user_id}/{unique_filename}"
+
+        try:
+            bucket = storage.bucket()
+            blob = bucket.blob(destination_path)
+            upload_url = blob.generate_signed_url(
+                version='v4',
+                expiration=timedelta(minutes=15),
+                method='PUT',
+                content_type=content_type,
+            )
+            public_download_url = (
+                f"https://firebasestorage.googleapis.com/v0/b/{bucket.name}/o/"
+                f"{destination_path.replace('/', '%2F')}?alt=media"
+            )
+            return Response({
+                "upload_url": upload_url,
+                "file_path": destination_path,
+                "public_download_url": public_download_url
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            print(f"Error generating signed URL: {e}")
+            return Response(
+                {"error": f"Could not generate signed URL: {e}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 # class PublicApi(APIView):
 #     authentication_classes = ()
