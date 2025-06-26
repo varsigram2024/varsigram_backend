@@ -170,12 +170,9 @@ class GenericFollowSerializer(serializers.ModelSerializer):
     class Meta:
         model = Follow
         fields = [
-            'id', 'follower_type', 'follower_id', 'followee_type', 'followee_id',
-            'created_at',
-            'follower_student', 'follower_organization',
-            'followee_student', 'followee_organization'
+            'id', 'follower_type', 'follower_id', 'followee_type', 'followee_id', 'created_at'
         ]
-        read_only_fields = ('created_at', 'id', 'follower_student', 'follower_organization', 'followee_student', 'followee_organization')
+        read_only_fields = ('created_at', 'id')
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
