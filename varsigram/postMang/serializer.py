@@ -1,9 +1,9 @@
 from datetime import datetime, timezone
 from users.serializer import UserSerializer, OrganizationProfileSerializer, StudentProfileSerializer
-from .models import Post, Comment, Like, Share, Follow
+from .models import Follow
 from rest_framework import serializers
 import logging
-
+from django.contrib.contenttypes.models import ContentType
 
 class FirestorePostCreateSerializer(serializers.Serializer):
     content = serializers.CharField(max_length=10000)
@@ -161,38 +161,41 @@ class FirestoreShareOutputSerializer(serializers.Serializer):
     user_comment = serializers.CharField(read_only=True, required=False) # User's comment on the share
     shared_at = serializers.DateTimeField(read_only=True, source='timestamp') # Timestamp of the share
 
-class FollowSerializer(serializers.ModelSerializer):
-    """
-    Serializer for the Follow model (Student follows Organization).
-    This assumes Follow, Student, and Organization are still Django ORM models.
-    """
-    # For read operations, these nested serializers will show details
-    organization = OrganizationProfileSerializer(read_only=True)
-    student = StudentProfileSerializer(read_only=True)
+class GenericFollowSerializer(serializers.ModelSerializer):
+    follower_type = serializers.CharField(write_only=True)
+    follower_id = serializers.IntegerField(write_only=True)
+    followee_type = serializers.CharField(write_only=True)
+    followee_id = serializers.IntegerField(write_only=True)
 
-    # For write operations (creating a follow), you might want to accept IDs
-    # or have these come from the view context/URL.
-    # If you need to accept IDs in the request body for creating a follow:
-    # organization_id = serializers.PrimaryKeyRelatedField(queryset=Organization.objects.all(), source='organization', write_only=True)
-    # student_id = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all(), source='student', write_only=True)
+    # For read operations, show details if possible
+    follower_student = StudentProfileSerializer(source='follower', read_only=True)
+    follower_organization = OrganizationProfileSerializer(source='follower', read_only=True)
+    followee_student = StudentProfileSerializer(source='followee', read_only=True)
+    followee_organization = OrganizationProfileSerializer(source='followee', read_only=True)
 
     class Meta:
         model = Follow
-        fields = ('id', 'organization', 'student', 'created_at')
-        read_only_fields = ('created_at', 'id') # 'student' is often set in perform_create
+        fields = [
+            'id', 'follower_type', 'follower_id', 'followee_type', 'followee_id',
+            'created_at',
+            'follower_student', 'follower_organization',
+            'followee_student', 'followee_organization'
+        ]
+        read_only_fields = ('created_at', 'id', 'follower_student', 'follower_organization', 'followee_student', 'followee_organization')
+    
+    def create(self, validated_data):
+        follower_type = validated_data.pop('follower_type')
+        follower_id = validated_data.pop('follower_id')
+        followee_type = validated_data.pop('followee_type')
+        followee_id = validated_data.pop('followee_id')
 
-    # Your view's perform_create would typically set the student from request.user
-    # and get the organization from a URL kwarg.
+        follower_content_type = ContentType.objects.get(model=follower_type.lower())
+        followee_content_type = ContentType.objects.get(model=followee_type.lower())
 
-
-class FollowingSerializer(serializers.ModelSerializer):
-    """
-    Serializer to list organizations a student is following.
-    This assumes Follow and Organization are still Django ORM models.
-    """
-    organization = OrganizationProfileSerializer(read_only=True)
-
-    class Meta:
-        model = Follow # This serializer is still based on the Follow model instances
-        fields = ('organization', 'created_at') # Shows the followed organization and when
-        read_only_fields = ('created_at',)
+        follow, created = Follow.objects.get_or_create(
+            follower_content_type=follower_content_type,
+            follower_object_id=follower_id,
+            followee_content_type=followee_content_type,
+            followee_object_id=followee_id,
+        )
+        return follow

@@ -1,8 +1,8 @@
 from django.urls import path
 from .views import (
-    PostListCreateFirestoreView, PostDetailFirestoreView,
+    GenericFollowView, GenericUnfollowView, ListFollowersView, ListFollowingView, PostListCreateFirestoreView, PostDetailFirestoreView,
     CommentCreateFirestoreView, CommentListFirestoreView,
-    LikeToggleFirestoreView, LikeListFirestoreView, FollowingOrganizationsView, OrganizationFollowersView, FollowOrganizationView, UnfollowOrganizationView, SharePostFirestoreView,
+    LikeToggleFirestoreView, LikeListFirestoreView, SharePostFirestoreView,
     UserPostsFirestoreView, TrendingPostsFirestoreView, FeedView,
     WhoToFollowView
 )
@@ -19,9 +19,9 @@ urlpatterns = [
     # path('posts/search/', PostSearchView.as_view(), name='post-search'),
     path('feed/', FeedView.as_view(), name='feed'),
     path('trending/', TrendingPostsFirestoreView.as_view(), name='trending-posts'),
-    path('users/<slug:display_name_slug>/follow/', FollowOrganizationView.as_view(), name='follow-organization'),
-    path('users/<slug:display_name_slug>/unfollow/', UnfollowOrganizationView.as_view(), name='unfollow-organization'),
-    path('following/', FollowingOrganizationsView.as_view(), name='following-organizations'),
-    path('users/<slug:display_name_slug>/followers/', OrganizationFollowersView.as_view(), name='organization-followers'),
+    path('users/follow/', GenericFollowView.as_view(), name='follow-user'),
+    path('users/unfollow/', GenericUnfollowView.as_view(), name='generic-unfollow'),
+    path('users/followers/', ListFollowersView.as_view(), name='list-followers'),
+    path('users/following/', ListFollowingView.as_view(), name='list-following'),
     path('who-to-follow/', WhoToFollowView.as_view(), name='who-to-follow'),
 ]
