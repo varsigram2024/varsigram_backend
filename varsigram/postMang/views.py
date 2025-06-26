@@ -307,6 +307,14 @@ class IsFirestoreDocOwner(permissions.BasePermission):
         # obj_data is the dictionary from Firestore
         return obj_data.get('author_id') == str(request.user.id)
 
+class IsVerified(permissions.BasePermission):
+    """
+    Allows access only to verified users.
+    """
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated and getattr(user, "is_verified", False))
 ##
 ## Post Views (Firestore)
 ##
@@ -370,6 +378,8 @@ class PostListCreateFirestoreView(APIView):
     def post(self, request):
         if not request.user.is_authenticated:
             return Response({"error": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
+        if not getattr(request.user, 'is_verified', False):
+            return Response({"error": "You must be a verified user to create posts."}, status=status.HTTP_403_FORBIDDEN)
 
         serializer = FirestorePostCreateSerializer(data=request.data)
         if serializer.is_valid():
@@ -528,7 +538,7 @@ class CommentCreateFirestoreView(APIView):
     Create a new comment for a post in Firestore using a transactional decorator.
     URL: /api/posts/{post_id}/comments/
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsVerified]
 
     def post(self, request, post_id): # Get post_id from URL
         user_id = str(request.user.id) # Ensure user ID is a string for Firestore
@@ -695,7 +705,7 @@ class LikeToggleFirestoreView(APIView):
     Like or unlike a post. A single endpoint to toggle the like status.
     URL: /api/posts/{post_id}/like/
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsVerified] # Ensure user is authenticated and verified
 
     def post(self, request, post_id): # post_id from URL
         user_id = str(request.user.id)
@@ -889,13 +899,62 @@ class TrendingPostsFirestoreView(generics.ListAPIView):
         serializer = self.get_serializer(posts_data, many=True, context={'authors_map': authors_map})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+class ExclusiveOrgsRecentPostsView(APIView):
+    """
+    List recent posts from all exclusive organizations (not just those followed by the user).
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        try:
+            # Get all exclusive organizations
+            exclusive_orgs = Organization.objects.filter(exclusive=True)
+            exclusive_org_user_ids = [str(org.user.id) for org in exclusive_orgs]
+
+            if not exclusive_org_user_ids:
+                return Response([], status=status.HTTP_200_OK)
+
+            # Fetch recent posts from these exclusive orgs (limit to last 20)
+            posts_ref = db.collection('posts') \
+                          .where('author_id', 'in', exclusive_org_user_ids) \
+                          .order_by('created_at', direction=firestore.Query.DESCENDING) \
+                          .limit(20)
+            docs = posts_ref.stream()
+            posts_list = []
+            for doc in docs:
+                post_data = doc.to_dict()
+                post_data['id'] = doc.id
+                posts_list.append(post_data)
+
+            # Hydrate author info
+            authors_map = {}
+            authors_from_postgres = User.objects.filter(id__in=exclusive_org_user_ids).only('id', 'email', 'profile_pic_url')
+            for author in authors_from_postgres:
+                author_name = None
+                display_name_slug = None
+                if hasattr(author, 'organization'):
+                    author_name = author.organization.organization_name
+                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
+                authors_map[str(author.id)] = {
+                    "id": author.id,
+                    "email": author.email,
+                    "profile_pic_url": author.profile_pic_url,
+                    "name": author_name,
+                    "display_name_slug": display_name_slug,
+                }
+
+            serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"error": f"Failed to fetch exclusive org posts: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class SharePostFirestoreView(APIView):
     """
     Allows an authenticated user to share a specific post using a Firestore transactional decorator.
     URL: /api/posts/{post_id}/share/
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsVerified]
 
     def post(self, request, post_id):
         user_id = str(request.user.id) # Firestore UIDs are strings
@@ -963,7 +1022,7 @@ class UserPostsFirestoreView(APIView):
     List all posts by a specific user identified by their user_id.
     URL: /api/users/{user_id}/posts/
     """
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsVerified]
 
     def get(self, request, user_id):
         target_user_id = user_id
