@@ -287,7 +287,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Student
-        fields = ['user', 'name', 'display_name_slug','faculty', 'department', 'year', 'religion', 'phone_number', 'sex', 'university', 'date_of_birth']
+        fields = ['user', 'id', 'name', 'display_name_slug','faculty', 'department', 'year', 'religion', 'phone_number', 'sex', 'university', 'date_of_birth']
 
 class OrganizationProfileSerializer(serializers.ModelSerializer):
     """Serializer for retrieving organization profiles."""
@@ -295,7 +295,7 @@ class OrganizationProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Organization
-        fields = ['user', 'organization_name', 'display_name_slug', 'exclusive']
+        fields = ['user', 'id', 'organization_name', 'display_name_slug', 'exclusive']
 
 class UserDeactivateSerializer(serializers.Serializer):
     """ Serializer for deactivating a user account """
