@@ -1084,13 +1084,22 @@ class WhoToFollowView(APIView):
             student = Student.objects.select_related('user').get(user=user)
             student_ct = ContentType.objects.get(model='student')
             org_ct = ContentType.objects.get(model='organization')
-            followed_org_ids = Follow.objects.filter(
-                follower_content_type=student_ct,
-                follower_object_id=student.id,
-                followee_content_type=org_ct
-            ).values_list('followee_object_id', flat=True)
 
-            # Build a list of keywords from student info
+            # Get all follows (students and orgs)
+            follows = Follow.objects.filter(
+                follower_content_type=student_ct,
+                follower_object_id=student.id
+            )
+            followed_student_ids = list(
+                follows.filter(followee_content_type=student_ct)
+                .values_list('followee_object_id', flat=True)
+            )
+            followed_org_ids = list(
+                follows.filter(followee_content_type=org_ct)
+                .values_list('followee_object_id', flat=True)
+            )
+
+            # Build keywords
             keywords = []
             if student.department:
                 keywords.append(student.department)
@@ -1099,29 +1108,58 @@ class WhoToFollowView(APIView):
             if student.religion:
                 keywords.append(student.religion)
 
-            # Start with exclusive orgs
+            # --- Students matching keywords ---
+            student_query = Q()
+            for kw in keywords:
+                student_query |= Q(department__icontains=kw) | Q(faculty__icontains=kw) | Q(religion__icontains=kw)
+            recommended_students = Student.objects.filter(student_query).exclude(
+                id__in=followed_student_ids
+            ).exclude(user=user)[:20]
+
+            # --- Organizations matching keywords ---
+            org_query = Q()
+            for kw in keywords:
+                org_query |= Q(organization_name__icontains=kw) | Q(user__bio__icontains=kw)
+            recommended_orgs = Organization.objects.filter(org_query).exclude(
+                id__in=followed_org_ids
+            )[:20]
+
+            # --- All exclusive orgs (always included, even if already matched by keywords) ---
             exclusive_orgs = Organization.objects.filter(exclusive=True)
 
-            # Recommend orgs whose name or bio matches any keyword
-            query = Q()
-            for kw in keywords:
-                query |= Q(organization_name__icontains=kw) | Q(user__bio__icontains=kw)
-            recommended_orgs = Organization.objects.filter(query).exclude(id__in=followed_org_ids)
+            # --- Combine and deduplicate organizations ---
+            all_orgs = (exclusive_orgs | recommended_orgs).distinct().exclude(id__in=followed_org_ids)
 
-            # Combine and remove duplicates
-            all_recommended = (exclusive_orgs | recommended_orgs).distinct().exclude(id__in=followed_org_ids)[:20]
-
-            orgs_data = [
+            # --- Prepare unified data ---
+            users_data = [
                 {
+                    "type": "student",
+                    "id": s.id,
+                    "user_id": s.user.id,
+                    "name": s.name,
+                    "display_name_slug": getattr(s, "display_name_slug", None),
+                    "profile_pic_url": getattr(s.user, "profile_pic_url", None),
+                    "bio": getattr(s.user, "bio", None),
+                }
+                for s in recommended_students
+            ] + [
+                {
+                    "type": "organization",
                     "id": org.id,
+                    "user_id": org.user.id,
                     "name": org.organization_name,
                     "display_name_slug": org.display_name_slug,
                     "profile_pic_url": getattr(org, "profile_pic_url", None),
                     "bio": org.user.bio if hasattr(org, 'user') else None,
+                    "exclusive": org.exclusive,
                 }
-                for org in all_recommended
+                for org in all_orgs
             ]
-            return Response(orgs_data, status=status.HTTP_200_OK)
+
+            # Optionally, sort or limit the combined list
+            users_data = users_data[:20]
+
+            return Response(users_data, status=status.HTTP_200_OK)
         except Student.DoesNotExist:
             return Response({"error": "Student profile not found."}, status=status.HTTP_404_NOT_FOUND)
 

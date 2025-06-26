@@ -167,12 +167,6 @@ class GenericFollowSerializer(serializers.ModelSerializer):
     followee_type = serializers.CharField(write_only=True)
     followee_id = serializers.IntegerField(write_only=True)
 
-    # For read operations, show details if possible
-    follower_student = StudentProfileSerializer(source='follower', read_only=True)
-    follower_organization = OrganizationProfileSerializer(source='follower', read_only=True)
-    followee_student = StudentProfileSerializer(source='followee', read_only=True)
-    followee_organization = OrganizationProfileSerializer(source='followee', read_only=True)
-
     class Meta:
         model = Follow
         fields = [
@@ -182,7 +176,33 @@ class GenericFollowSerializer(serializers.ModelSerializer):
             'followee_student', 'followee_organization'
         ]
         read_only_fields = ('created_at', 'id', 'follower_student', 'follower_organization', 'followee_student', 'followee_organization')
-    
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # Follower
+        follower = instance.follower
+        if hasattr(follower, 'name'):  # Student
+            data['follower_student'] = StudentProfileSerializer(follower).data
+            data['follower_organization'] = None
+        elif hasattr(follower, 'organization_name'):  # Organization
+            data['follower_student'] = None
+            data['follower_organization'] = OrganizationProfileSerializer(follower).data
+        else:
+            data['follower_student'] = None
+            data['follower_organization'] = None
+        # Followee
+        followee = instance.followee
+        if hasattr(followee, 'name'):  # Student
+            data['followee_student'] = StudentProfileSerializer(followee).data
+            data['followee_organization'] = None
+        elif hasattr(followee, 'organization_name'):  # Organization
+            data['followee_student'] = None
+            data['followee_organization'] = OrganizationProfileSerializer(followee).data
+        else:
+            data['followee_student'] = None
+            data['followee_organization'] = None
+        return data
+
     def create(self, validated_data):
         follower_type = validated_data.pop('follower_type')
         follower_id = validated_data.pop('follower_id')
