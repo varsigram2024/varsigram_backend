@@ -1109,6 +1109,11 @@ class WhoToFollowView(APIView):
             student_ct = ContentType.objects.get(model='student')
             org_ct = ContentType.objects.get(model='organization')
 
+            print("Current user:", user)
+            print("Current student id:", student.id)
+            print("student_ct.id:", student_ct.id)
+            print("org_ct.id:", org_ct.id)
+            
             follows = Follow.objects.filter(
                 follower_content_type=student_ct,
                 follower_object_id=student.id
