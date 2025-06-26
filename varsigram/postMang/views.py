@@ -1095,10 +1095,19 @@ class UserPostsFirestoreView(APIView):
 
             # --- Add shares made by this user ---
             shares_query = db.collection('shares').where('shared_by_id', '==', target_user_id).order_by('shared_at', direction=firestore.Query.DESCENDING).stream()
+            shares_map = {}
             for share_doc in shares_query:
                 share_data = share_doc.to_dict()
                 original_post_id = share_data.get('original_post_id')
                 if original_post_id:
+                    # Add this share to the shares_map for the original post
+                    if original_post_id not in shares_map:
+                        shares_map[original_post_id] = []
+                    # Optionally, serialize with FirestoreShareOutputSerializer
+                    share_data['id'] = share_doc.id
+                    shares_map[original_post_id].append(share_data)
+
+                    # Also add the shared post to the posts_list if you want to show it in the user's activity
                     original_post_ref = db.collection('posts').document(original_post_id)
                     original_post_doc = original_post_ref.get()
                     if original_post_doc.exists:
@@ -1135,7 +1144,9 @@ class UserPostsFirestoreView(APIView):
             # Sort posts by timestamp or shared_at (most recent first)
             posts_list.sort(key=lambda x: x.get('shared_at') or x.get('timestamp'), reverse=True)
 
-            serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
+            serializer = FirestorePostOutputSerializer(
+                posts_list, many=True, context={'authors_map': authors_map, 'shares_map': shares_map}
+            )
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         except Exception as e:
@@ -1224,3 +1235,23 @@ class WhoToFollowView(APIView):
             return Response(users_data, status=status.HTTP_200_OK)
         except Student.DoesNotExist:
             return Response({"error": "Student profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+class UserSharesListView(APIView):
+    """
+    List all shares made by a specific user.
+    URL: /api/users/{user_id}/shares/
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, user_id):
+        try:
+            shares_query = db.collection('shares').where('shared_by_id', '==', user_id)
+            shares = []
+            for doc in shares_query.stream():
+                share_data = doc.to_dict()
+                share_data['id'] = doc.id
+                shares.append(share_data)
+            serializer = FirestoreShareOutputSerializer(shares, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except Exception as e:
+            return Response({"error": f"Failed to retrieve shares: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
