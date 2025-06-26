@@ -295,7 +295,7 @@ class OrganizationProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Organization
-        fields = ['user', 'organization_name', 'display_name_slug']
+        fields = ['user', 'organization_name', 'display_name_slug', 'exclusive']
 
 class UserDeactivateSerializer(serializers.Serializer):
     """ Serializer for deactivating a user account """
