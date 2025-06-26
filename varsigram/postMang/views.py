@@ -1085,21 +1085,19 @@ class WhoToFollowView(APIView):
             student_ct = ContentType.objects.get(model='student')
             org_ct = ContentType.objects.get(model='organization')
 
-            # Get all follows (students and orgs)
             follows = Follow.objects.filter(
                 follower_content_type=student_ct,
                 follower_object_id=student.id
             )
-            followed_student_ids = list(
+            followed_student_ids = set(
                 follows.filter(followee_content_type=student_ct)
                 .values_list('followee_object_id', flat=True)
             )
-            followed_org_ids = list(
+            followed_org_ids = set(
                 follows.filter(followee_content_type=org_ct)
                 .values_list('followee_object_id', flat=True)
             )
 
-            # Build keywords
             keywords = []
             if student.department:
                 keywords.append(student.department)
@@ -1108,7 +1106,6 @@ class WhoToFollowView(APIView):
             if student.religion:
                 keywords.append(student.religion)
 
-            # --- Students matching keywords ---
             student_query = Q()
             for kw in keywords:
                 student_query |= Q(department__icontains=kw) | Q(faculty__icontains=kw) | Q(religion__icontains=kw)
@@ -1116,7 +1113,6 @@ class WhoToFollowView(APIView):
                 id__in=followed_student_ids
             ).exclude(user=user)[:20]
 
-            # --- Organizations matching keywords ---
             org_query = Q()
             for kw in keywords:
                 org_query |= Q(organization_name__icontains=kw) | Q(user__bio__icontains=kw)
@@ -1124,10 +1120,8 @@ class WhoToFollowView(APIView):
                 id__in=followed_org_ids
             )[:20]
 
-            # --- All exclusive orgs (always included, even if already matched by keywords) ---
             exclusive_orgs = Organization.objects.filter(exclusive=True).exclude(id__in=followed_org_ids)
 
-            # --- Prepare unified data ---
             users_data = [
                 {
                     "type": "student",
@@ -1137,6 +1131,7 @@ class WhoToFollowView(APIView):
                     "display_name_slug": getattr(s, "display_name_slug", None),
                     "profile_pic_url": getattr(s.user, "profile_pic_url", None),
                     "bio": getattr(s.user, "bio", None),
+                    "is_following": s.id in followed_student_ids,
                 }
                 for s in recommended_students
             ] + [
@@ -1149,11 +1144,11 @@ class WhoToFollowView(APIView):
                     "profile_pic_url": getattr(org.user, "profile_pic_url", None),
                     "bio": org.user.bio if hasattr(org, 'user') else None,
                     "exclusive": org.exclusive,
+                    "is_following": org.id in followed_org_ids,
                 }
                 for org in (recommended_orgs | exclusive_orgs).distinct()
             ]
 
-            # Optionally, sort or limit the combined list
             users_data = users_data[:20]
 
             return Response(users_data, status=status.HTTP_200_OK)

@@ -6,6 +6,7 @@ from rest_framework import status, generics
 from rest_framework.exceptions import NotFound
 from rest_framework_jwt.settings import api_settings
 from .models import User, Student, Organization
+from postMang.models import Follow
 from .serializer import ( 
     # UserSearchSerializer, UserSerializer, GoogleInputSerializer,
     PasswordResetConfirmSerializer, PasswordResetSerializer, ChangePasswordSerializer,
@@ -491,17 +492,50 @@ class PublicProfileView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, slug):
+        user = request.user if request.user.is_authenticated else None
+        is_following = False
+
         # Try to find a student with this slug
         student = Student.objects.filter(display_name_slug=slug).first()
         if student:
+            # Check if current user is following this student
+            if user and hasattr(user, 'student'):
+                from django.contrib.contenttypes.models import ContentType
+                student_ct = ContentType.objects.get(model='student')
+                follow_exists = Follow.objects.filter(
+                    follower_content_type=student_ct,
+                    follower_object_id=user.student.id,
+                    followee_content_type=student_ct,
+                    followee_object_id=student.id
+                ).exists()
+                is_following = follow_exists
             serializer = StudentProfileSerializer(student)
-            return Response({"profile_type": "student", "profile": serializer.data})
+            return Response({
+                "profile_type": "student",
+                "profile": serializer.data,
+                "is_following": is_following
+            })
 
         # Try to find an organization with this slug
         organization = Organization.objects.filter(display_name_slug=slug).first()
         if organization:
+            if user and hasattr(user, 'student'):
+                from django.contrib.contenttypes.models import ContentType
+                student_ct = ContentType.objects.get(model='student')
+                org_ct = ContentType.objects.get(model='organization')
+                follow_exists = Follow.objects.filter(
+                    follower_content_type=student_ct,
+                    follower_object_id=user.student.id,
+                    followee_content_type=org_ct,
+                    followee_object_id=organization.id
+                ).exists()
+                is_following = follow_exists
             serializer = OrganizationProfileSerializer(organization)
-            return Response({"profile_type": "organization", "profile": serializer.data})
+            return Response({
+                "profile_type": "organization",
+                "profile": serializer.data,
+                "is_following": is_following
+            })
 
         return Response({"detail": "Profile not found."}, status=404)
 
