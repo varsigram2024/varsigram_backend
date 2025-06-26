@@ -1146,7 +1146,7 @@ class WhoToFollowView(APIView):
                     "user_id": org.user.id,
                     "name": org.organization_name,
                     "display_name_slug": org.display_name_slug,
-                    "profile_pic_url": getattr(org, "profile_pic_url", None),
+                    "profile_pic_url": getattr(org.user, "profile_pic_url", None),
                     "bio": org.user.bio if hasattr(org, 'user') else None,
                     "exclusive": org.exclusive,
                 }
