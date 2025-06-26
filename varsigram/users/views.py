@@ -30,6 +30,7 @@ from firebase_admin import storage
 from datetime import timedelta
 import os
 from uuid import uuid4
+from django.contrib.contenttypes.models import ContentType
 # import urllib.parse
 
 
@@ -498,10 +499,20 @@ class PublicProfileView(APIView):
         # Try to find a student with this slug
         student = Student.objects.filter(display_name_slug=slug).first()
         if student:
+            student_ct = ContentType.objects.get(model='student')
+            # Followers: anyone following this student
+            followers_count = Follow.objects.filter(
+                followee_content_type=student_ct,
+                followee_object_id=student.id
+            ).count()
+            # Following: how many profiles this student is following
+            following_count = Follow.objects.filter(
+                follower_content_type=student_ct,
+                follower_object_id=student.id
+            ).count()
+
             # Check if current user is following this student
             if user and hasattr(user, 'student'):
-                from django.contrib.contenttypes.models import ContentType
-                student_ct = ContentType.objects.get(model='student')
                 follow_exists = Follow.objects.filter(
                     follower_content_type=student_ct,
                     follower_object_id=user.student.id,
@@ -513,16 +524,28 @@ class PublicProfileView(APIView):
             return Response({
                 "profile_type": "student",
                 "profile": serializer.data,
-                "is_following": is_following
+                "is_following": is_following,
+                "followers_count": followers_count,
+                "following_count": following_count,
             })
 
         # Try to find an organization with this slug
         organization = Organization.objects.filter(display_name_slug=slug).first()
         if organization:
+            student_ct = ContentType.objects.get(model='student')
+            org_ct = ContentType.objects.get(model='organization')
+            # Followers: anyone following this organization
+            followers_count = Follow.objects.filter(
+                followee_content_type=org_ct,
+                followee_object_id=organization.id
+            ).count()
+            # Following: how many profiles this organization is following (if orgs can follow)
+            following_count = Follow.objects.filter(
+                follower_content_type=org_ct,
+                follower_object_id=organization.id
+            ).count()
+
             if user and hasattr(user, 'student'):
-                from django.contrib.contenttypes.models import ContentType
-                student_ct = ContentType.objects.get(model='student')
-                org_ct = ContentType.objects.get(model='organization')
                 follow_exists = Follow.objects.filter(
                     follower_content_type=student_ct,
                     follower_object_id=user.student.id,
@@ -534,7 +557,9 @@ class PublicProfileView(APIView):
             return Response({
                 "profile_type": "organization",
                 "profile": serializer.data,
-                "is_following": is_following
+                "is_following": is_following,
+                "followers_count": followers_count,
+                "following_count": following_count,
             })
 
         return Response({"detail": "Profile not found."}, status=404)
