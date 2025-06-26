@@ -38,22 +38,40 @@ class GenericUnfollowView(APIView):
 
     def post(self, request):
         follower_type = request.data.get('follower_type')
-        follower_id = request.data.get('follower_id')
+        follower_user_id = request.data.get('follower_id')  # This is user.id from frontend
         followee_type = request.data.get('followee_type')
-        followee_id = request.data.get('followee_id')
+        followee_user_id = request.data.get('followee_id')  # This is user.id from frontend
 
-        if not all([follower_type, follower_id, followee_type, followee_id]):
+        if not all([follower_type, follower_user_id, followee_type, followee_user_id]):
             return Response({"error": "All fields are required."}, status=status.HTTP_400_BAD_REQUEST)
 
         follower_content_type = ContentType.objects.get(model=follower_type.lower())
         followee_content_type = ContentType.objects.get(model=followee_type.lower())
 
+        # Resolve profile IDs from user IDs
+        try:
+            if follower_type.lower() == 'student':
+                follower_profile_id = Student.objects.get(user_id=follower_user_id).id
+            elif follower_type.lower() == 'organization':
+                follower_profile_id = Organization.objects.get(user_id=follower_user_id).id
+            else:
+                return Response({"error": "Invalid follower_type."}, status=status.HTTP_400_BAD_REQUEST)
+
+            if followee_type.lower() == 'student':
+                followee_profile_id = Student.objects.get(user_id=followee_user_id).id
+            elif followee_type.lower() == 'organization':
+                followee_profile_id = Organization.objects.get(user_id=followee_user_id).id
+            else:
+                return Response({"error": "Invalid followee_type."}, status=status.HTTP_400_BAD_REQUEST)
+        except (Student.DoesNotExist, Organization.DoesNotExist):
+            return Response({"error": "Profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
         try:
             follow = Follow.objects.get(
                 follower_content_type=follower_content_type,
-                follower_object_id=follower_id,
+                follower_object_id=follower_profile_id,
                 followee_content_type=followee_content_type,
-                followee_object_id=followee_id,
+                followee_object_id=followee_profile_id,
             )
             follow.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
@@ -66,13 +84,26 @@ class ListFollowersView(generics.ListAPIView):
 
     def get_queryset(self):
         followee_type = self.request.query_params.get('followee_type')
-        followee_id = self.request.query_params.get('followee_id')
-        if not followee_type or not followee_id:
+        followee_user_id = self.request.query_params.get('followee_id')  # This is user.id from frontend
+        if not followee_type or not followee_user_id:
             return Follow.objects.none()
         followee_content_type = ContentType.objects.get(model=followee_type.lower())
+        # Resolve profile id from user id
+        if followee_type.lower() == 'student':
+            try:
+                followee_profile_id = Student.objects.get(user_id=followee_user_id).id
+            except Student.DoesNotExist:
+                return Follow.objects.none()
+        elif followee_type.lower() == 'organization':
+            try:
+                followee_profile_id = Organization.objects.get(user_id=followee_user_id).id
+            except Organization.DoesNotExist:
+                return Follow.objects.none()
+        else:
+            return Follow.objects.none()
         return Follow.objects.filter(
             followee_content_type=followee_content_type,
-            followee_object_id=followee_id
+            followee_object_id=followee_profile_id
         )
 
 class ListFollowingView(generics.ListAPIView):
@@ -81,15 +112,27 @@ class ListFollowingView(generics.ListAPIView):
 
     def get_queryset(self):
         follower_type = self.request.query_params.get('follower_type')
-        follower_id = self.request.query_params.get('follower_id')
-        if not follower_type or not follower_id:
+        follower_user_id = self.request.query_params.get('follower_id')  # This is user.id from frontend
+        if not follower_type or not follower_user_id:
             return Follow.objects.none()
         follower_content_type = ContentType.objects.get(model=follower_type.lower())
+        # Resolve profile id from user id
+        if follower_type.lower() == 'student':
+            try:
+                follower_profile_id = Student.objects.get(user_id=follower_user_id).id
+            except Student.DoesNotExist:
+                return Follow.objects.none()
+        elif follower_type.lower() == 'organization':
+            try:
+                follower_profile_id = Organization.objects.get(user_id=follower_user_id).id
+            except Organization.DoesNotExist:
+                return Follow.objects.none()
+        else:
+            return Follow.objects.none()
         return Follow.objects.filter(
             follower_content_type=follower_content_type,
-            follower_object_id=follower_id
+            follower_object_id=follower_profile_id
         )
-
 logger = logging.getLogger(__name__)
 class FeedView(generics.ListAPIView):
     """
@@ -1113,7 +1156,7 @@ class WhoToFollowView(APIView):
             print("Current student id:", student.id)
             print("student_ct.id:", student_ct.id)
             print("org_ct.id:", org_ct.id)
-            
+
             follows = Follow.objects.filter(
                 follower_content_type=student_ct,
                 follower_object_id=student.id
