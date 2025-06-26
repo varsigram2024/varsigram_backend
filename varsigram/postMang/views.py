@@ -1125,10 +1125,7 @@ class WhoToFollowView(APIView):
             )[:20]
 
             # --- All exclusive orgs (always included, even if already matched by keywords) ---
-            exclusive_orgs = Organization.objects.filter(exclusive=True)
-
-            # --- Combine and deduplicate organizations ---
-            all_orgs = (exclusive_orgs | recommended_orgs).distinct().exclude(id__in=followed_org_ids)
+            exclusive_orgs = Organization.objects.filter(exclusive=True).exclude(id__in=followed_org_ids)
 
             # --- Prepare unified data ---
             users_data = [
@@ -1153,7 +1150,7 @@ class WhoToFollowView(APIView):
                     "bio": org.user.bio if hasattr(org, 'user') else None,
                     "exclusive": org.exclusive,
                 }
-                for org in all_orgs
+                for org in (recommended_orgs | exclusive_orgs).distinct()
             ]
 
             # Optionally, sort or limit the combined list
@@ -1162,4 +1159,3 @@ class WhoToFollowView(APIView):
             return Response(users_data, status=status.HTTP_200_OK)
         except Student.DoesNotExist:
             return Response({"error": "Student profile not found."}, status=status.HTTP_404_NOT_FOUND)
-
