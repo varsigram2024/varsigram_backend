@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from users.serializer import UserSerializer, OrganizationProfileSerializer, StudentProfileSerializer
 from .models import Follow
+from users.models import Student, Organization
 from rest_framework import serializers
 import logging
 from django.contrib.contenttypes.models import ContentType
@@ -202,9 +203,24 @@ class GenericFollowSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         follower_type = validated_data.pop('follower_type')
-        follower_id = validated_data.pop('follower_id')
+        follower_user_id = validated_data.pop('follower_id')  # This is user.id from frontend
         followee_type = validated_data.pop('followee_type')
-        followee_id = validated_data.pop('followee_id')
+        followee_user_id = validated_data.pop('followee_id')  # This is user.id from frontend
+
+        # Resolve profile IDs
+        if follower_type.lower() == 'student':
+            follower_id = Student.objects.get(user_id=follower_user_id).id
+        elif follower_type.lower() == 'organization':
+            follower_id = Organization.objects.get(user_id=follower_user_id).id
+        else:
+            raise serializers.ValidationError("Invalid follower_type")
+
+        if followee_type.lower() == 'student':
+            followee_id = Student.objects.get(user_id=followee_user_id).id
+        elif followee_type.lower() == 'organization':
+            followee_id = Organization.objects.get(user_id=followee_user_id).id
+        else:
+            raise serializers.ValidationError("Invalid followee_type")
 
         follower_content_type = ContentType.objects.get(model=follower_type.lower())
         followee_content_type = ContentType.objects.get(model=followee_type.lower())
