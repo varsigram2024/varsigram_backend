@@ -1025,7 +1025,7 @@ class SharePostFirestoreView(APIView):
 
 class UserPostsFirestoreView(APIView):
     """
-    List all posts by a specific user identified by their user_id.
+    List all posts by a specific user identified by their user_id, including shares.
     URL: /api/users/{user_id}/posts/
     """
     permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsVerified]
@@ -1047,7 +1047,28 @@ class UserPostsFirestoreView(APIView):
                 if current_user_id:
                     like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
                     post_data['has_liked'] = like_doc_ref.get().exists
+                post_data['is_shared'] = False  # Mark as original post
                 posts_list.append(post_data)
+
+            # --- Add shares made by this user ---
+            shares_query = db.collection('shares').where('shared_by_id', '==', target_user_id).order_by('shared_at', direction=firestore.Query.DESCENDING).stream()
+            for share_doc in shares_query:
+                share_data = share_doc.to_dict()
+                original_post_id = share_data.get('original_post_id')
+                if original_post_id:
+                    original_post_ref = db.collection('posts').document(original_post_id)
+                    original_post_doc = original_post_ref.get()
+                    if original_post_doc.exists:
+                        post_data = original_post_doc.to_dict()
+                        post_data['id'] = original_post_doc.id
+                        post_data['is_shared'] = True
+                        post_data['shared_by_id'] = share_data.get('shared_by_id')
+                        post_data['shared_at'] = share_data.get('shared_at')
+                        post_data['has_liked'] = False
+                        if current_user_id:
+                            like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
+                            post_data['has_liked'] = like_doc_ref.get().exists
+                        posts_list.append(post_data)
 
             # Hydrate author info for the target user
             authors_map = {}
@@ -1067,6 +1088,9 @@ class UserPostsFirestoreView(APIView):
                 }
             except User.DoesNotExist:
                 pass
+
+            # Sort posts by timestamp or shared_at (most recent first)
+            posts_list.sort(key=lambda x: x.get('shared_at') or x.get('timestamp'), reverse=True)
 
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -1089,14 +1113,8 @@ class WhoToFollowView(APIView):
                 follower_content_type=student_ct,
                 follower_object_id=student.id
             )
-            followed_student_ids = set(
-                follows.filter(followee_content_type=student_ct)
-                .values_list('followee_object_id', flat=True)
-            )
-            followed_org_ids = set(
-                follows.filter(followee_content_type=org_ct)
-                .values_list('followee_object_id', flat=True)
-            )
+            followed_student_ids = set(int(x) for x in follows.filter(followee_content_type=student_ct).values_list('followee_object_id', flat=True))
+            followed_org_ids = set(int(x) for x in follows.filter(followee_content_type=org_ct).values_list('followee_object_id', flat=True))
 
             keywords = []
             if student.department:
@@ -1121,6 +1139,10 @@ class WhoToFollowView(APIView):
             )[:20]
 
             exclusive_orgs = Organization.objects.filter(exclusive=True).exclude(id__in=followed_org_ids)
+
+            print("followed_student_ids:", followed_student_ids)
+            print("followed_org_ids:", followed_org_ids)
+            print("Recommended org IDs:", [org.id for org in (recommended_orgs | exclusive_orgs).distinct()])
 
             users_data = [
                 {
