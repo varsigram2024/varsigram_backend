@@ -388,7 +388,7 @@ class PostListCreateFirestoreView(APIView):
                     author_ids.add(str(post_data['author_id']))
 
             # Hydrate authors_map with display_name_slug
-            authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url')
+            authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
             authors_map = {}
             for author in authors_from_postgres:
                 author_name = None
@@ -406,6 +406,7 @@ class PostListCreateFirestoreView(APIView):
                     "profile_pic_url": author.profile_pic_url,
                     "name": author_name,
                     "display_name_slug": display_name_slug,
+                    "is_verified": author.is_verified if hasattr(author, 'is_verified') else False,
                 }
 
             # Add has_liked logic if needed (as you already have)
@@ -493,7 +494,7 @@ class PostDetailFirestoreView(APIView):
             author_info = None
             if author_id:
                 try:
-                    author = User.objects.only('id', 'email', 'profile_pic_url').get(id=author_id)
+                    author = User.objects.only('id', 'email', 'profile_pic_url', 'is_verified').get(id=author_id)
                     author_name = None
                     if hasattr(author, 'student') and author.student.name:
                         author_name = author.student.name
@@ -505,6 +506,7 @@ class PostDetailFirestoreView(APIView):
                         "email": author.email,
                         "profile_pic_url": author.profile_pic_url,
                         "name": author_name,
+                        "is_verified": author.is_verified if hasattr(author, 'is_verified') else False,
                     }
                 except User.DoesNotExist:
                     author_info = {
@@ -512,6 +514,7 @@ class PostDetailFirestoreView(APIView):
                         "email": None,
                         "profile_pic_url": None,
                         "name": None,
+                        "is_verified": None
                     }
             else:
                 author_info = None
@@ -681,7 +684,7 @@ class CommentListFirestoreView(APIView):
                     author_ids.add(str(comment_data['author_id']))
 
             # Hydrate authors_map
-            authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url')
+            authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
             authors_map = {}
             for author in authors_from_postgres:
                 author_name = None
@@ -696,6 +699,8 @@ class CommentListFirestoreView(APIView):
                     "id": author.id,
                     "name": author_name,
                     "display_name_slug": display_name_slug,
+                    "profile_pic_url": author.profile_pic_url,
+                    "is_verified": author.is_verified if hasattr(author, 'is_verified') else False,
                 }
 
             serializer = FirestoreCommentSerializer(comments_list, many=True, context={'authors_map': authors_map})
@@ -924,7 +929,7 @@ class TrendingPostsFirestoreView(generics.ListAPIView):
 
         # --- Hydrate author info ---
         author_ids = list(set(str(post['author_id']) for post in posts_data if 'author_id' in post))
-        authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url')
+        authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
         authors_map = {}
         for author in authors_from_postgres:
             author_name = None
@@ -942,6 +947,7 @@ class TrendingPostsFirestoreView(generics.ListAPIView):
                 "profile_pic_url": author.profile_pic_url,
                 "name": author_name,
                 "display_name_slug": display_name_slug,
+                "is_verified": author.is_verified if hasattr(author, 'is_verified') else False,
             }
 
         # --- Serialize with authors_map ---
@@ -977,7 +983,7 @@ class ExclusiveOrgsRecentPostsView(APIView):
 
             # Hydrate author info
             authors_map = {}
-            authors_from_postgres = User.objects.filter(id__in=exclusive_org_user_ids).only('id', 'email', 'profile_pic_url')
+            authors_from_postgres = User.objects.filter(id__in=exclusive_org_user_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
             for author in authors_from_postgres:
                 author_name = None
                 display_name_slug = None
@@ -990,6 +996,7 @@ class ExclusiveOrgsRecentPostsView(APIView):
                     "profile_pic_url": author.profile_pic_url,
                     "name": author_name,
                     "display_name_slug": display_name_slug,
+                    "is_verified": author.is_verified if hasattr(author, 'is_verified') else False,
                 }
 
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
@@ -1125,7 +1132,7 @@ class UserPostsFirestoreView(APIView):
             # Hydrate author info for the target user
             authors_map = {}
             try:
-                author = User.objects.only('id', 'email', 'profile_pic_url').get(id=target_user_id)
+                author = User.objects.only('id', 'email', 'profile_pic_url', 'is_verified').get(id=target_user_id)
                 author_name = None
                 if hasattr(author, 'student') and author.student.name:
                     author_name = author.student.name
@@ -1137,6 +1144,7 @@ class UserPostsFirestoreView(APIView):
                     "email": author.email,
                     "profile_pic_url": author.profile_pic_url,
                     "name": author_name,
+                    "is_verified": author.is_verified,
                 }
             except User.DoesNotExist:
                 pass
@@ -1213,6 +1221,7 @@ class WhoToFollowView(APIView):
                     "profile_pic_url": getattr(s.user, "profile_pic_url", None),
                     "bio": getattr(s.user, "bio", None),
                     "is_following": s.id in followed_student_ids,
+                    "is_verified": s.user.is_verified if hasattr(s, 'user') else False,
                 }
                 for s in recommended_students
             ] + [
@@ -1226,6 +1235,7 @@ class WhoToFollowView(APIView):
                     "bio": org.user.bio if hasattr(org, 'user') else None,
                     "exclusive": org.exclusive,
                     "is_following": org.id in followed_org_ids,
+                    "is_verified": org.user.is_verified if hasattr(org, 'user') else False,
                 }
                 for org in (recommended_orgs | exclusive_orgs).distinct()
             ]
@@ -1236,22 +1246,3 @@ class WhoToFollowView(APIView):
         except Student.DoesNotExist:
             return Response({"error": "Student profile not found."}, status=status.HTTP_404_NOT_FOUND)
 
-class UserSharesListView(APIView):
-    """
-    List all shares made by a specific user.
-    URL: /api/users/{user_id}/shares/
-    """
-    permission_classes = [permissions.AllowAny]
-
-    def get(self, request, user_id):
-        try:
-            shares_query = db.collection('shares').where('shared_by_id', '==', user_id)
-            shares = []
-            for doc in shares_query.stream():
-                share_data = doc.to_dict()
-                share_data['id'] = doc.id
-                shares.append(share_data)
-            serializer = FirestoreShareOutputSerializer(shares, many=True)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        except Exception as e:
-            return Response({"error": f"Failed to retrieve shares: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
