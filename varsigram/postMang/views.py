@@ -179,37 +179,26 @@ class FeedView(generics.ListAPIView):
             student = Student.objects.select_related('user').get(user=user)
             user_id_postgres = str(user.id)
 
-            # --- 1. Get all followees (students and organizations) ---
+            # --- 1. Get all followed students ---
             student_ct = ContentType.objects.get(model='student')
-            org_ct = ContentType.objects.get(model='organization')
             follows = Follow.objects.filter(
                 follower_content_type=student_ct,
-                follower_object_id=student.id
+                follower_object_id=student.id,
+                followee_content_type=student_ct
             )
-
             followee_student_ids = list(
-                follows.filter(followee_content_type=student_ct)
-                .values_list('followee_object_id', flat=True)
+                follows.values_list('followee_object_id', flat=True)
             )
-            followee_org_ids = list(
-                follows.filter(followee_content_type=org_ct)
-                .values_list('followee_object_id', flat=True)
-            )
-
             followed_user_ids = list(
                 User.objects.filter(student__id__in=followee_student_ids).values_list('id', flat=True)
-            ) + list(
-                User.objects.filter(organization__id__in=followee_org_ids).values_list('id', flat=True)
             )
-
-            # Convert all IDs to string for Firestore compatibility
             followed_user_ids_str = [str(uid) for uid in followed_user_ids]
-            logger.debug(f"Followed user IDs for user {user_id_postgres}: {followed_user_ids_str}")
+            logger.debug(f"Followed student user IDs for user {user_id_postgres}: {followed_user_ids_str}")
 
-            # --- 2. Get posts from followed users ---
+            # --- 2. Get posts from followed students ---
             if followed_user_ids_str:
                 if len(followed_user_ids_str) > 10:
-                    logger.warning("Too many followed users for single Firestore 'in' query. Limiting to first 10.")
+                    logger.warning("Too many followed students for single Firestore 'in' query. Limiting to first 10.")
                     followed_user_ids_str = followed_user_ids_str[:10]
                 try:
                     followed_posts_query = db.collection('posts') \
@@ -223,11 +212,11 @@ class FeedView(generics.ListAPIView):
                         post_data['id'] = doc.id
                         all_feed_posts[doc.id] = post_data
                 except Exception as e:
-                    logger.error(f"Error fetching followed user posts for user {user_id_postgres}: {e}", exc_info=True)
+                    logger.error(f"Error fetching followed student posts for user {user_id_postgres}: {e}", exc_info=True)
             else:
-                logger.info(f"No followed users found for user {user_id_postgres}")
+                logger.info(f"No followed students found for user {user_id_postgres}")
 
-            # --- 3. Fill with posts from related users (by keywords), excluding already-followed and self ---
+            # --- 3. Fill with posts from related students (by keywords), excluding already-followed and self ---
             if len(all_feed_posts) < posts_limit:
                 eligible_user_ids = set()
                 if student.department:
@@ -239,11 +228,11 @@ class FeedView(generics.ListAPIView):
                 if student.religion:
                     religion_users = User.objects.filter(student__religion=student.religion).values_list('id', flat=True)
                     eligible_user_ids.update(religion_users)
-                # Remove already-followed users and self
+                # Remove already-followed students and self
                 eligible_user_ids.difference_update(set(followed_user_ids))
                 eligible_user_ids.discard(user.id)
                 eligible_user_ids_list = [str(uid) for uid in list(eligible_user_ids)]
-                logger.debug(f"Eligible user IDs for attribute-based posts for user {user_id_postgres}: {eligible_user_ids_list}")
+                logger.debug(f"Eligible student user IDs for attribute-based posts for user {user_id_postgres}: {eligible_user_ids_list}")
                 if eligible_user_ids_list:
                     if len(eligible_user_ids_list) > 10:
                         eligible_user_ids_list = eligible_user_ids_list[:10]
@@ -262,15 +251,19 @@ class FeedView(generics.ListAPIView):
                             if len(all_feed_posts) >= posts_limit:
                                 break
                     except Exception as e:
-                        logger.error(f"Error fetching attribute-based posts for user {user_id_postgres}: {e}", exc_info=True)
+                        logger.error(f"Error fetching attribute-based student posts for user {user_id_postgres}: {e}", exc_info=True)
                 else:
-                    logger.info(f"No eligible attribute-based users found for user {user_id_postgres}")
+                    logger.info(f"No eligible attribute-based students found for user {user_id_postgres}")
 
-            # --- 4. Fallback: If still empty, fetch general recent posts ---
+            # --- 4. Fallback: If still empty, fetch general recent posts by students ---
             if not all_feed_posts:
-                logger.info(f"No personalized posts found for user {user_id_postgres}, falling back to general posts.")
+                logger.info(f"No personalized posts found for user {user_id_postgres}, falling back to general student posts.")
                 try:
+                    # Get all student user IDs
+                    all_student_user_ids = list(User.objects.filter(student__isnull=False).values_list('id', flat=True))
+                    all_student_user_ids_str = [str(uid) for uid in all_student_user_ids][:10]  # Firestore 'in' limit
                     general_posts_query = db.collection('posts') \
+                                            .where('author_id', 'in', all_student_user_ids_str) \
                                             .order_by('created_at', direction=firestore.Query.DESCENDING)
                     if start_after_values:
                         general_posts_query = general_posts_query.start_after(start_after_values[0], start_after_values[1])
@@ -280,12 +273,15 @@ class FeedView(generics.ListAPIView):
                         post_data['id'] = doc.id
                         all_feed_posts[doc.id] = post_data
                 except Exception as e:
-                    logger.error(f"Error fetching general posts for user {user_id_postgres}: {e}", exc_info=True)
+                    logger.error(f"Error fetching general student posts for user {user_id_postgres}: {e}", exc_info=True)
 
         except Student.DoesNotExist:
-            logger.info(f"Student profile not found for user {user.id}. Falling back to general recent posts.")
+            logger.info(f"Student profile not found for user {user.id}. Falling back to general student posts.")
             try:
+                all_student_user_ids = list(User.objects.filter(student__isnull=False).values_list('id', flat=True))
+                all_student_user_ids_str = [str(uid) for uid in all_student_user_ids][:10]
                 general_posts_query = db.collection('posts') \
+                                        .where('author_id', 'in', all_student_user_ids_str) \
                                         .order_by('created_at', direction=firestore.Query.DESCENDING)
                 if start_after_values:
                     general_posts_query = general_posts_query.start_after(start_after_values[0], start_after_values[1])
@@ -295,7 +291,7 @@ class FeedView(generics.ListAPIView):
                     post_data['id'] = doc.id
                     all_feed_posts[doc.id] = post_data
             except Exception as e:
-                logger.error(f"Error fetching general posts for user {user.id}: {e}", exc_info=True)
+                logger.error(f"Error fetching general student posts for user {user.id}: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Unexpected error during feed generation for user {user.id}: {e}", exc_info=True)
             return []
@@ -314,7 +310,7 @@ class FeedView(generics.ListAPIView):
                 post['has_liked'] = False
 
         return final_posts
-
+    
     def list(self, request, *args, **kwargs):
         posts_data = self.get_queryset()
         author_ids = list(set(str(post['author_id']) for post in posts_data if 'author_id' in post))
@@ -335,7 +331,7 @@ class FeedView(generics.ListAPIView):
                 "profile_pic_url": author.profile_pic_url,
                 "name": author_name,
                 "display_name_slug": display_name_slug,
-                "is_verified": author.is_verified if hasattr(author, 'is_verified') else False,
+                "is_verified": author.is_verified
             }
         serializer = self.get_serializer(posts_data, many=True, context={'authors_map': authors_map})
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -393,7 +389,7 @@ class PostListCreateFirestoreView(APIView):
                     "profile_pic_url": author.profile_pic_url,
                     "name": author_name,
                     "display_name_slug": display_name_slug,
-                    "is_verified": author.is_verified if hasattr(author, 'is_verified') else False,
+                    "is_verified": author.is_verified
                 }
 
             # Add has_liked logic if needed (as you already have)
@@ -944,26 +940,23 @@ class ExclusiveOrgsRecentPostsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        user = request.user
         posts_limit = 20
 
-        # 1. Get user's organization IDs (adjust this logic to your membership model)
-        user_org_ids = list(
-            Organization.objects.filter(members=user).values_list('id', flat=True)
+        # 1. Get all exclusive organizations' IDs
+        exclusive_org_ids = list(
+            Organization.objects.filter(exclusive=True).values_list('id', flat=True)
         )
-        user_org_ids_str = [str(org_id) for org_id in user_org_ids]
+        exclusive_org_ids_str = [str(org_id) for org_id in exclusive_org_ids]
 
-        if not user_org_ids_str:
+        if not exclusive_org_ids_str:
             return Response([], status=200)
 
-        # 2. Query Firestore for exclusive org posts
+        # 2. Query Firestore for posts from exclusive orgs
         posts = []
         try:
             # Firestore 'in' queries are limited to 10 items
-            org_ids_for_query = user_org_ids_str[:10]
-            db = firestore.client()
+            org_ids_for_query = exclusive_org_ids_str[:10]
             query = db.collection('posts') \
-                .where('is_exclusive_org', '==', True) \
                 .where('org_id', 'in', org_ids_for_query) \
                 .order_by('created_at', direction=firestore.Query.DESCENDING) \
                 .limit(posts_limit)
@@ -972,12 +965,14 @@ class ExclusiveOrgsRecentPostsView(APIView):
                 post_data['id'] = doc.id
                 posts.append(post_data)
         except Exception as e:
-            logger.error(f"Error fetching exclusive org posts for user {user.id}: {e}", exc_info=True)
+            logger.error(f"Error fetching exclusive org posts: {e}", exc_info=True)
             return Response({"detail": "Error fetching posts."}, status=500)
 
         # 3. Serialize and return
         serializer = FirestorePostOutputSerializer(posts, many=True)
         return Response(serializer.data, status=200)
+
+
 # class SharePostFirestoreView(APIView):
 #     """
 #     Allows an authenticated user to share a specific post using a Firestore transactional decorator.
