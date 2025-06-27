@@ -147,25 +147,25 @@ class FirestorePostOutputSerializer(serializers.Serializer):
 
 
 
-class FirestoreShareOutputSerializer(serializers.Serializer):
-    """
-    Serializer for representing a 'Share' object fetched from Firestore.
-    """
-    id = serializers.CharField(read_only=True) # Firestore document ID of the share
+# class FirestoreShareOutputSerializer(serializers.Serializer):
+#     """
+#     Serializer for representing a 'Share' object fetched from Firestore.
+#     """
+#     id = serializers.CharField(read_only=True) # Firestore document ID of the share
     
-    # Information about the user who shared
-    # Assuming UserSerializer is for your SQL-based Django User model
-    # In the view, when serializing, you'd fetch the Django User object using user_id from Firestore
-    # and pass it to UserSerializer.
-    user = UserSerializer(read_only=True) # Represents the user who shared
+#     # Information about the user who shared
+#     # Assuming UserSerializer is for your SQL-based Django User model
+#     # In the view, when serializing, you'd fetch the Django User object using user_id from Firestore
+#     # and pass it to UserSerializer.
+#     user = UserSerializer(read_only=True) # Represents the user who shared
 
-    # Information about the post that was shared
-    # This assumes 'original_post_data' is a dictionary stored in the share document
-    # or you fetch the post separately and pass it to FirestorePostOutputSerializer
-    post = FirestorePostOutputSerializer(read_only=True) # Represents the shared post
+#     # Information about the post that was shared
+#     # This assumes 'original_post_data' is a dictionary stored in the share document
+#     # or you fetch the post separately and pass it to FirestorePostOutputSerializer
+#     post = FirestorePostOutputSerializer(read_only=True) # Represents the shared post
 
-    user_comment = serializers.CharField(read_only=True, required=False) # User's comment on the share
-    shared_at = serializers.DateTimeField(read_only=True, source='timestamp') # Timestamp of the share
+#     user_comment = serializers.CharField(read_only=True, required=False) # User's comment on the share
+#     shared_at = serializers.DateTimeField(read_only=True, source='timestamp') # Timestamp of the share
 
 class GenericFollowSerializer(serializers.ModelSerializer):
     follower_type = serializers.CharField(write_only=True)
