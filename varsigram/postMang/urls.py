@@ -2,8 +2,8 @@ from django.urls import path
 from .views import (
     GenericFollowView, GenericUnfollowView, ListFollowersView, ListFollowingView, PostListCreateFirestoreView, PostDetailFirestoreView,
     CommentCreateFirestoreView, CommentListFirestoreView,
-    LikeToggleFirestoreView, LikeListFirestoreView, SharePostFirestoreView,
-    UserPostsFirestoreView, TrendingPostsFirestoreView, FeedView,
+    LikeToggleFirestoreView, LikeListFirestoreView,
+    UserPostsFirestoreView, FeedView,
     WhoToFollowView, ExclusiveOrgsRecentPostsView
 )
 
