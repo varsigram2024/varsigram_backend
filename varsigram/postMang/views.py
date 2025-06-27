@@ -149,18 +149,18 @@ class FeedView(generics.ListAPIView):
     List posts in the personalized feed based on user's follows and profile attributes.
     Only for authenticated and verified users.
     """
-    permission_classes = [permissions.IsAuthenticated, IsVerified]
-    serializer_class = FirestorePostOutputSerializer # Default serializer
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = FirestorePostOutputSerializer  # Default serializer
 
     def get_serializer_class(self):
         if 'shared' in self.request.query_params:
             return FirestoreShareOutputSerializer
         return FirestorePostOutputSerializer
 
-    def get_queryset(self): 
+    def get_queryset(self):
         user = self.request.user
         posts_limit = 20
-        
+
         last_created_at_str = self.request.query_params.get('last_created_at')
         last_post_id = self.request.query_params.get('last_post_id')
 
@@ -168,7 +168,7 @@ class FeedView(generics.ListAPIView):
         if last_created_at_str and last_post_id:
             try:
                 start_after_created_at = datetime.fromisoformat(last_created_at_str.replace('Z', '+00:00'))
-                start_after_values = (start_after_created_at, last_post_id) 
+                start_after_values = (start_after_created_at, last_post_id)
             except ValueError:
                 logger.warning(f"Invalid last_created_at format: {last_created_at_str}")
                 start_after_values = None
@@ -202,7 +202,9 @@ class FeedView(generics.ListAPIView):
                 User.objects.filter(organization__id__in=followee_org_ids).values_list('id', flat=True)
             )
 
+            # Convert all IDs to string for Firestore compatibility
             followed_user_ids_str = [str(uid) for uid in followed_user_ids]
+            logger.debug(f"Followed user IDs for user {user_id_postgres}: {followed_user_ids_str}")
 
             # --- 2. Get posts from followed users ---
             if followed_user_ids_str:
@@ -222,6 +224,8 @@ class FeedView(generics.ListAPIView):
                         all_feed_posts[doc.id] = post_data
                 except Exception as e:
                     logger.error(f"Error fetching followed user posts for user {user_id_postgres}: {e}", exc_info=True)
+            else:
+                logger.info(f"No followed users found for user {user_id_postgres}")
 
             # --- 3. Fill with posts from related users (by keywords), excluding already-followed and self ---
             if len(all_feed_posts) < posts_limit:
@@ -239,6 +243,7 @@ class FeedView(generics.ListAPIView):
                 eligible_user_ids.difference_update(set(followed_user_ids))
                 eligible_user_ids.discard(user.id)
                 eligible_user_ids_list = [str(uid) for uid in list(eligible_user_ids)]
+                logger.debug(f"Eligible user IDs for attribute-based posts for user {user_id_postgres}: {eligible_user_ids_list}")
                 if eligible_user_ids_list:
                     if len(eligible_user_ids_list) > 10:
                         eligible_user_ids_list = eligible_user_ids_list[:10]
@@ -258,9 +263,28 @@ class FeedView(generics.ListAPIView):
                                 break
                     except Exception as e:
                         logger.error(f"Error fetching attribute-based posts for user {user_id_postgres}: {e}", exc_info=True)
+                else:
+                    logger.info(f"No eligible attribute-based users found for user {user_id_postgres}")
 
             # --- 4. Fallback: If still empty, fetch general recent posts ---
             if not all_feed_posts:
+                logger.info(f"No personalized posts found for user {user_id_postgres}, falling back to general posts.")
+                try:
+                    general_posts_query = db.collection('posts') \
+                                            .order_by('created_at', direction=firestore.Query.DESCENDING)
+                    if start_after_values:
+                        general_posts_query = general_posts_query.start_after(start_after_values[0], start_after_values[1])
+                    general_posts_query = general_posts_query.limit(posts_limit)
+                    for doc in general_posts_query.stream():
+                        post_data = doc.to_dict()
+                        post_data['id'] = doc.id
+                        all_feed_posts[doc.id] = post_data
+                except Exception as e:
+                    logger.error(f"Error fetching general posts for user {user_id_postgres}: {e}", exc_info=True)
+
+        except Student.DoesNotExist:
+            logger.info(f"Student profile not found for user {user.id}. Falling back to general recent posts.")
+            try:
                 general_posts_query = db.collection('posts') \
                                         .order_by('created_at', direction=firestore.Query.DESCENDING)
                 if start_after_values:
@@ -270,18 +294,8 @@ class FeedView(generics.ListAPIView):
                     post_data = doc.to_dict()
                     post_data['id'] = doc.id
                     all_feed_posts[doc.id] = post_data
-
-        except Student.DoesNotExist:
-            logger.info(f"Student profile not found for user {user.id}. Falling back to general recent posts.")
-            general_posts_query = db.collection('posts') \
-                                    .order_by('created_at', direction=firestore.Query.DESCENDING)
-            if start_after_values:
-                general_posts_query = general_posts_query.start_after(start_after_values[0], start_after_values[1])
-            general_posts_query = general_posts_query.limit(posts_limit)
-            for doc in general_posts_query.stream():
-                post_data = doc.to_dict()
-                post_data['id'] = doc.id
-                all_feed_posts[doc.id] = post_data
+            except Exception as e:
+                logger.error(f"Error fetching general posts for user {user.id}: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Unexpected error during feed generation for user {user.id}: {e}", exc_info=True)
             return []
@@ -298,7 +312,7 @@ class FeedView(generics.ListAPIView):
             except Exception as e:
                 logger.warning(f"Error checking like status for post {post_id} by user {user_id_str}: {e}")
                 post['has_liked'] = False
-        
+
         return final_posts
 
     def list(self, request, *args, **kwargs):
@@ -325,7 +339,6 @@ class FeedView(generics.ListAPIView):
             }
         serializer = self.get_serializer(posts_data, many=True, context={'authors_map': authors_map})
         return Response(serializer.data, status=status.HTTP_200_OK)
-
 
 # Custom Permission Example (simplified)
 class IsFirestoreDocOwner(permissions.BasePermission):
@@ -928,56 +941,43 @@ class LikeListFirestoreView(APIView):
 #         return Response(serializer.data, status=status.HTTP_200_OK)
 
 class ExclusiveOrgsRecentPostsView(APIView):
-    """
-    List recent posts from all exclusive organizations (not just those followed by the user).
-    """
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsVerified]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        user = request.user
+        posts_limit = 20
+
+        # 1. Get user's organization IDs (adjust this logic to your membership model)
+        user_org_ids = list(
+            Organization.objects.filter(members=user).values_list('id', flat=True)
+        )
+        user_org_ids_str = [str(org_id) for org_id in user_org_ids]
+
+        if not user_org_ids_str:
+            return Response([], status=200)
+
+        # 2. Query Firestore for exclusive org posts
+        posts = []
         try:
-            # Get all exclusive organizations
-            exclusive_orgs = Organization.objects.filter(exclusive=True)
-            exclusive_org_user_ids = [str(org.user.id) for org in exclusive_orgs]
-
-            if not exclusive_org_user_ids:
-                return Response([], status=status.HTTP_200_OK)
-
-            # Fetch recent posts from these exclusive orgs (limit to last 20)
-            posts_ref = db.collection('posts') \
-                          .where('author_id', 'in', exclusive_org_user_ids) \
-                          .order_by('created_at', direction=firestore.Query.DESCENDING) \
-                          .limit(20)
-            docs = posts_ref.stream()
-            posts_list = []
-            for doc in docs:
+            # Firestore 'in' queries are limited to 10 items
+            org_ids_for_query = user_org_ids_str[:10]
+            db = firestore.client()
+            query = db.collection('posts') \
+                .where('is_exclusive_org', '==', True) \
+                .where('org_id', 'in', org_ids_for_query) \
+                .order_by('created_at', direction=firestore.Query.DESCENDING) \
+                .limit(posts_limit)
+            for doc in query.stream():
                 post_data = doc.to_dict()
                 post_data['id'] = doc.id
-                posts_list.append(post_data)
-
-            # Hydrate author info
-            authors_map = {}
-            authors_from_postgres = User.objects.filter(id__in=exclusive_org_user_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
-            for author in authors_from_postgres:
-                author_name = None
-                display_name_slug = None
-                if hasattr(author, 'organization'):
-                    author_name = author.organization.organization_name
-                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
-                authors_map[str(author.id)] = {
-                    "id": author.id,
-                    "email": author.email,
-                    "profile_pic_url": author.profile_pic_url,
-                    "name": author_name,
-                    "display_name_slug": display_name_slug,
-                    "is_verified": author.is_verified if hasattr(author, 'is_verified') else False,
-                }
-
-            serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
-            return Response(serializer.data, status=status.HTTP_200_OK)
-
+                posts.append(post_data)
         except Exception as e:
-            return Response({"error": f"Failed to fetch exclusive org posts: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Error fetching exclusive org posts for user {user.id}: {e}", exc_info=True)
+            return Response({"detail": "Error fetching posts."}, status=500)
 
+        # 3. Serialize and return
+        serializer = FirestorePostOutputSerializer(posts, many=True)
+        return Response(serializer.data, status=200)
 # class SharePostFirestoreView(APIView):
 #     """
 #     Allows an authenticated user to share a specific post using a Firestore transactional decorator.
