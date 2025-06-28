@@ -9,7 +9,7 @@ from django.contrib.auth import get_user_model
 from firebase_admin import firestore
 from postMang.apps import db  # Import the Firestore client from the app config
 from .models import (User, Follow, Student, Organization)
-from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, GenericFollowSerializer, FirestoreShareOutputSerializer
+from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, GenericFollowSerializer
 from .utils import IsOwnerOrReadOnly
 from itertools import chain
 import logging
