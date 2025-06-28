@@ -10,7 +10,7 @@ from firebase_admin import firestore
 from postMang.apps import db  # Import the Firestore client from the app config
 from .models import (User, Follow, Student, Organization)
 from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, GenericFollowSerializer
-from .utils import IsOwnerOrReadOnly
+from .utils import get_exclusive_org_user_ids
 from itertools import chain
 import logging
 from datetime import datetime, timezone, timedelta
@@ -38,274 +38,7 @@ class IsVerified(permissions.BasePermission):
         user = request.user
         return bool(user and user.is_authenticated and getattr(user, "is_verified", False))
 
-class GenericFollowView(generics.CreateAPIView):
-    serializer_class = GenericFollowSerializer
-    permission_classes = [permissions.IsAuthenticated]
 
-class GenericUnfollowView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def post(self, request):
-        follower_type = request.data.get('follower_type')
-        follower_user_id = request.data.get('follower_id')  # This is user.id from frontend
-        followee_type = request.data.get('followee_type')
-        followee_user_id = request.data.get('followee_id')  # This is user.id from frontend
-
-        if not all([follower_type, follower_user_id, followee_type, followee_user_id]):
-            return Response({"error": "All fields are required."}, status=status.HTTP_400_BAD_REQUEST)
-
-        follower_content_type = ContentType.objects.get(model=follower_type.lower())
-        followee_content_type = ContentType.objects.get(model=followee_type.lower())
-
-        # Resolve profile IDs from user IDs
-        try:
-            if follower_type.lower() == 'student':
-                follower_profile_id = Student.objects.get(user_id=follower_user_id).id
-            elif follower_type.lower() == 'organization':
-                follower_profile_id = Organization.objects.get(user_id=follower_user_id).id
-            else:
-                return Response({"error": "Invalid follower_type."}, status=status.HTTP_400_BAD_REQUEST)
-
-            if followee_type.lower() == 'student':
-                followee_profile_id = Student.objects.get(user_id=followee_user_id).id
-            elif followee_type.lower() == 'organization':
-                followee_profile_id = Organization.objects.get(user_id=followee_user_id).id
-            else:
-                return Response({"error": "Invalid followee_type."}, status=status.HTTP_400_BAD_REQUEST)
-        except (Student.DoesNotExist, Organization.DoesNotExist):
-            return Response({"error": "Profile not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            follow = Follow.objects.get(
-                follower_content_type=follower_content_type,
-                follower_object_id=follower_profile_id,
-                followee_content_type=followee_content_type,
-                followee_object_id=followee_profile_id,
-            )
-            follow.delete()
-            return Response(status=status.HTTP_204_NO_CONTENT)
-        except Follow.DoesNotExist:
-            return Response({"error": "Follow relationship does not exist."}, status=status.HTTP_404_NOT_FOUND)
-
-class ListFollowersView(generics.ListAPIView):
-    serializer_class = GenericFollowSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-
-    def get_queryset(self):
-        followee_type = self.request.query_params.get('followee_type')
-        followee_user_id = self.request.query_params.get('followee_id')  # This is user.id from frontend
-        if not followee_type or not followee_user_id:
-            return Follow.objects.none()
-        followee_content_type = ContentType.objects.get(model=followee_type.lower())
-        # Resolve profile id from user id
-        if followee_type.lower() == 'student':
-            try:
-                followee_profile_id = Student.objects.get(user_id=followee_user_id).id
-            except Student.DoesNotExist:
-                return Follow.objects.none()
-        elif followee_type.lower() == 'organization':
-            try:
-                followee_profile_id = Organization.objects.get(user_id=followee_user_id).id
-            except Organization.DoesNotExist:
-                return Follow.objects.none()
-        else:
-            return Follow.objects.none()
-        return Follow.objects.filter(
-            followee_content_type=followee_content_type,
-            followee_object_id=followee_profile_id
-        )
-
-class ListFollowingView(generics.ListAPIView):
-    serializer_class = GenericFollowSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-
-    def get_queryset(self):
-        follower_type = self.request.query_params.get('follower_type')
-        follower_user_id = self.request.query_params.get('follower_id')  # This is user.id from frontend
-        if not follower_type or not follower_user_id:
-            return Follow.objects.none()
-        follower_content_type = ContentType.objects.get(model=follower_type.lower())
-        # Resolve profile id from user id
-        if follower_type.lower() == 'student':
-            try:
-                follower_profile_id = Student.objects.get(user_id=follower_user_id).id
-            except Student.DoesNotExist:
-                return Follow.objects.none()
-        elif follower_type.lower() == 'organization':
-            try:
-                follower_profile_id = Organization.objects.get(user_id=follower_user_id).id
-            except Organization.DoesNotExist:
-                return Follow.objects.none()
-        else:
-            return Follow.objects.none()
-        return Follow.objects.filter(
-            follower_content_type=follower_content_type,
-            follower_object_id=follower_profile_id
-        )
-logger = logging.getLogger(__name__)
-
-class FeedView(generics.ListAPIView):
-    """
-    List posts in the personalized feed based on user's follows and profile attributes.
-    Only for authenticated and verified users.
-    Only posts authored by Students are included.
-    """
-    permission_classes = [permissions.IsAuthenticated]
-    serializer_class = FirestorePostOutputSerializer
-
-    def get_queryset(self):
-        user = self.request.user
-        posts_limit = 20
-
-        last_created_at_str = self.request.query_params.get('last_created_at')
-        last_post_id = self.request.query_params.get('last_post_id')
-
-        start_after_values = None
-        if last_created_at_str and last_post_id:
-            try:
-                start_after_created_at = datetime.fromisoformat(last_created_at_str.replace('Z', '+00:00'))
-                start_after_values = (start_after_created_at, last_post_id)
-            except ValueError:
-                logger.warning(f"Invalid last_created_at format: {last_created_at_str}")
-                start_after_values = None
-
-        all_feed_posts = {}
-
-        try:
-            student = Student.objects.select_related('user').get(user=user)
-            user_id_postgres = str(user.id)
-
-            # --- 1. Get all followed students ---
-            student_ct = ContentType.objects.get(model='student')
-            follows = Follow.objects.filter(
-                follower_content_type=student_ct,
-                follower_object_id=student.id,
-                followee_content_type=student_ct
-            )
-            followee_student_ids = list(
-                follows.values_list('followee_object_id', flat=True)
-            )
-            followed_user_ids = list(
-                User.objects.filter(student__id__in=followee_student_ids).values_list('id', flat=True)
-            )
-            followed_user_ids_str = [str(uid) for uid in followed_user_ids]
-            logger.debug(f"Followed student user IDs for user {user_id_postgres}: {followed_user_ids_str}")
-
-            # --- 2. Get posts from followed students ---
-            if followed_user_ids_str:
-                if len(followed_user_ids_str) > 10:
-                    logger.warning("Too many followed students for single Firestore 'in' query. Limiting to first 10.")
-                    followed_user_ids_str = followed_user_ids_str[:10]
-                try:
-                    followed_posts_query = db.collection('posts') \
-                                             .where('author_id', 'in', followed_user_ids_str) \
-                                             .order_by('created_at', direction=firestore.Query.DESCENDING)
-                    if start_after_values:
-                        followed_posts_query = followed_posts_query.start_after(start_after_values[0], start_after_values[1])
-                    followed_posts_query = followed_posts_query.limit(posts_limit)
-                    for doc in followed_posts_query.stream():
-                        post_data = doc.to_dict()
-                        post_data['id'] = doc.id
-                        all_feed_posts[doc.id] = post_data
-                except Exception as e:
-                    logger.error(f"Error fetching followed student posts for user {user_id_postgres}: {e}", exc_info=True)
-            else:
-                logger.info(f"No followed students found for user {user_id_postgres}")
-
-            # --- 3. Fill with posts from related students (by keywords), excluding already-followed and self ---
-            if len(all_feed_posts) < posts_limit:
-                eligible_user_ids = set()
-                if student.department:
-                    dept_users = User.objects.filter(student__department=student.department).values_list('id', flat=True)
-                    eligible_user_ids.update(dept_users)
-                if student.faculty:
-                    faculty_users = User.objects.filter(student__faculty=student.faculty).values_list('id', flat=True)
-                    eligible_user_ids.update(faculty_users)
-                if student.religion:
-                    religion_users = User.objects.filter(student__religion=student.religion).values_list('id', flat=True)
-                    eligible_user_ids.update(religion_users)
-                # Remove already-followed students and self
-                eligible_user_ids.difference_update(set(followed_user_ids))
-                eligible_user_ids.discard(user.id)
-                eligible_user_ids_list = [str(uid) for uid in list(eligible_user_ids)]
-                logger.debug(f"Eligible student user IDs for attribute-based posts for user {user_id_postgres}: {eligible_user_ids_list}")
-                if eligible_user_ids_list:
-                    if len(eligible_user_ids_list) > 10:
-                        eligible_user_ids_list = eligible_user_ids_list[:10]
-                    try:
-                        needed = posts_limit - len(all_feed_posts)
-                        attribute_posts_query = db.collection('posts') \
-                                                .where('author_id', 'in', eligible_user_ids_list) \
-                                                .order_by('created_at', direction=firestore.Query.DESCENDING) \
-                                                .limit(needed)
-                        if start_after_values:
-                            attribute_posts_query = attribute_posts_query.start_after(start_after_values[0], start_after_values[1])
-                        for doc in attribute_posts_query.stream():
-                            post_data = doc.to_dict()
-                            post_data['id'] = doc.id
-                            all_feed_posts[doc.id] = post_data
-                            if len(all_feed_posts) >= posts_limit:
-                                break
-                    except Exception as e:
-                        logger.error(f"Error fetching attribute-based student posts for user {user_id_postgres}: {e}", exc_info=True)
-                else:
-                    logger.info(f"No eligible attribute-based students found for user {user_id_postgres}")
-
-            # --- 4. Fallback: If still empty, fetch general recent posts by students ---
-            if not all_feed_posts:
-                logger.info(f"No personalized posts found for user {user_id_postgres}, falling back to general student posts.")
-                try:
-                    # Get all student user IDs
-                    all_student_user_ids = list(User.objects.filter(student__isnull=False).values_list('id', flat=True))
-                    all_student_user_ids_str = [str(uid) for uid in all_student_user_ids][:10]  # Firestore 'in' limit
-                    general_posts_query = db.collection('posts') \
-                                            .where('author_id', 'in', all_student_user_ids_str) \
-                                            .order_by('created_at', direction=firestore.Query.DESCENDING)
-                    if start_after_values:
-                        general_posts_query = general_posts_query.start_after(start_after_values[0], start_after_values[1])
-                    general_posts_query = general_posts_query.limit(posts_limit)
-                    for doc in general_posts_query.stream():
-                        post_data = doc.to_dict()
-                        post_data['id'] = doc.id
-                        all_feed_posts[doc.id] = post_data
-                except Exception as e:
-                    logger.error(f"Error fetching general student posts for user {user_id_postgres}: {e}", exc_info=True)
-
-        except Student.DoesNotExist:
-            logger.info(f"Student profile not found for user {user.id}. Falling back to general student posts.")
-            try:
-                all_student_user_ids = list(User.objects.filter(student__isnull=False).values_list('id', flat=True))
-                all_student_user_ids_str = [str(uid) for uid in all_student_user_ids][:10]
-                general_posts_query = db.collection('posts') \
-                                        .where('author_id', 'in', all_student_user_ids_str) \
-                                        .order_by('created_at', direction=firestore.Query.DESCENDING)
-                if start_after_values:
-                    general_posts_query = general_posts_query.start_after(start_after_values[0], start_after_values[1])
-                general_posts_query = general_posts_query.limit(posts_limit)
-                for doc in general_posts_query.stream():
-                    post_data = doc.to_dict()
-                    post_data['id'] = doc.id
-                    all_feed_posts[doc.id] = post_data
-            except Exception as e:
-                logger.error(f"Error fetching general student posts for user {user.id}: {e}", exc_info=True)
-        except Exception as e:
-            logger.error(f"Unexpected error during feed generation for user {user.id}: {e}", exc_info=True)
-            return []
-
-        final_posts = list(all_feed_posts.values())
-        final_posts.sort(key=lambda x: x.get('created_at', datetime.min.replace(tzinfo=timezone.utc)), reverse=True)
-
-        user_id_str = str(user.id)
-        for post in final_posts:
-            post_id = post.get('id')
-            try:
-                like_doc = db.collection('posts').document(post_id).collection('likes').document(user_id_str).get()
-                post['has_liked'] = like_doc.exists
-            except Exception as e:
-                logger.warning(f"Error checking like status for post {post_id} by user {user_id_str}: {e}")
-                post['has_liked'] = False
-
-        return final_posts
 
 class GenericFollowView(generics.CreateAPIView):
     serializer_class = GenericFollowSerializer
@@ -424,7 +157,7 @@ class FeedView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        posts_limit = 20
+        posts_limit = 30
 
         last_created_at_str = self.request.query_params.get('last_created_at')
         last_post_id = self.request.query_params.get('last_post_id')
@@ -462,13 +195,13 @@ class FeedView(generics.ListAPIView):
 
             # --- 2. Get posts from followed students ---
             if followed_user_ids_str:
-                if len(followed_user_ids_str) > 10:
-                    logger.warning("Too many followed students for single Firestore 'in' query. Limiting to first 10.")
-                    followed_user_ids_str = followed_user_ids_str[:10]
+                if len(followed_user_ids_str) > 20:
+                    logger.warning("Too many followed students for single Firestore 'in' query. Limiting to first 20.")
+                    followed_user_ids_str = followed_user_ids_str[:20]
                 try:
                     followed_posts_query = db.collection('posts') \
                                              .where('author_id', 'in', followed_user_ids_str) \
-                                             .order_by('created_at', direction=firestore.Query.DESCENDING)
+                                             .order_by('timestamp', direction=firestore.Query.DESCENDING)
                     if start_after_values:
                         followed_posts_query = followed_posts_query.start_after(start_after_values[0], start_after_values[1])
                     followed_posts_query = followed_posts_query.limit(posts_limit)
@@ -505,7 +238,7 @@ class FeedView(generics.ListAPIView):
                         needed = posts_limit - len(all_feed_posts)
                         attribute_posts_query = db.collection('posts') \
                                                 .where('author_id', 'in', eligible_user_ids_list) \
-                                                .order_by('created_at', direction=firestore.Query.DESCENDING) \
+                                                .order_by('timestamp', direction=firestore.Query.DESCENDING) \
                                                 .limit(needed)
                         if start_after_values:
                             attribute_posts_query = attribute_posts_query.start_after(start_after_values[0], start_after_values[1])
@@ -529,7 +262,7 @@ class FeedView(generics.ListAPIView):
                     all_student_user_ids_str = [str(uid) for uid in all_student_user_ids][:10]  # Firestore 'in' limit
                     general_posts_query = db.collection('posts') \
                                             .where('author_id', 'in', all_student_user_ids_str) \
-                                            .order_by('created_at', direction=firestore.Query.DESCENDING)
+                                            .order_by('timestamp', direction=firestore.Query.DESCENDING)
                     if start_after_values:
                         general_posts_query = general_posts_query.start_after(start_after_values[0], start_after_values[1])
                     general_posts_query = general_posts_query.limit(posts_limit)
@@ -547,7 +280,7 @@ class FeedView(generics.ListAPIView):
                 all_student_user_ids_str = [str(uid) for uid in all_student_user_ids][:10]
                 general_posts_query = db.collection('posts') \
                                         .where('author_id', 'in', all_student_user_ids_str) \
-                                        .order_by('created_at', direction=firestore.Query.DESCENDING)
+                                        .order_by('timestamp', direction=firestore.Query.DESCENDING)
                 if start_after_values:
                     general_posts_query = general_posts_query.start_after(start_after_values[0], start_after_values[1])
                 general_posts_query = general_posts_query.limit(posts_limit)
@@ -562,7 +295,7 @@ class FeedView(generics.ListAPIView):
             return []
 
         final_posts = list(all_feed_posts.values())
-        final_posts.sort(key=lambda x: x.get('created_at', datetime.min.replace(tzinfo=timezone.utc)), reverse=True)
+        final_posts.sort(key=lambda x: x.get('timestamp', datetime.min.replace(tzinfo=timezone.utc)), reverse=True)
 
         user_id_str = str(user.id)
         for post in final_posts:
@@ -1206,16 +939,13 @@ class ExclusiveOrgsRecentPostsView(APIView):
     List recent posts from organizations with exclusive=True.
     Only posts authored by exclusive organizations are included.
     """
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
     def get(self, request):
         posts_limit = 20
 
         # 1. Get all exclusive organizations' user IDs
-        exclusive_org_user_ids = list(
-            Organization.objects.filter(exclusive=True).values_list('user_id', flat=True)
-        )
-        exclusive_org_user_ids_str = [str(uid) for uid in exclusive_org_user_ids]
+        exclusive_org_user_ids_str = get_exclusive_org_user_ids()
 
         if not exclusive_org_user_ids_str:
             return Response([], status=200)
@@ -1227,17 +957,216 @@ class ExclusiveOrgsRecentPostsView(APIView):
             org_user_ids_for_query = exclusive_org_user_ids_str[:10]
             query = db.collection('posts') \
                 .where('author_id', 'in', org_user_ids_for_query) \
-                .order_by('created_at', direction=firestore.Query.DESCENDING) \
+                .order_by('timestamp', direction=firestore.Query.DESCENDING) \
                 .limit(posts_limit)
+            
+            current_user_id = str(request.user.id) if request.user.is_authenticated else None
+    
             for doc in query.stream():
                 post_data = doc.to_dict()
                 post_data['id'] = doc.id
+                post_data['has_liked'] = False
+                if current_user_id:
+                    like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
+                    post_data['has_liked'] = like_doc_ref.get().exists
+                # post_data['is_shared'] = False  # Mark as original post
                 posts.append(post_data)
+            
+            # Hydrate author info for exclusive orgs
+            authors_map = {}
+            for user_id in exclusive_org_user_ids_str:
+                try:
+                    author = User.objects.only('id', 'email', 'profile_pic_url', 'is_verified').get(id=user_id)
+                    author_name = author.organization.organization_name
+
+                    authors_map[str(author.id)] = {
+                        "id": author.id,
+                        "email": author.email,
+                        "profile_pic_url": author.profile_pic_url,
+                        "name": author_name,
+                        "is_verified": author.is_verified,
+                    }
+                except User.DoesNotExist:
+                    pass
+            
+            serializer = FirestorePostOutputSerializer(posts, many=True, context={'authors_map': authors_map})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+    
         except Exception as e:
             logger.error(f"Error fetching exclusive org posts: {e}", exc_info=True)
-            return Response({"detail": "Error fetching posts."}, status=500)
+            return Response({"detail": "Error fetching posts."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # 3. Serialize and return
-        serializer = FirestorePostOutputSerializer(posts, many=True)
-        return Response(serializer.data, status=200)
+
+class UserPostsFirestoreView(APIView):
+    """
+    List all posts by a specific user identified by their user_id, including shares.
+    URL: /api/users/{user_id}/posts/
+    """
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsVerified]
+
+    def get(self, request, user_id):
+        target_user_id = user_id
+
+        try:
+            posts_ref = db.collection('posts')
+            posts_query = posts_ref.where('author_id', '==', target_user_id).order_by('timestamp', direction=firestore.Query.DESCENDING).stream()
+            
+            posts_list = []
+            current_user_id = str(request.user.id) if request.user.is_authenticated else None
+
+            for doc in posts_query:
+                post_data = doc.to_dict()
+                post_data['id'] = doc.id
+                post_data['has_liked'] = False
+                if current_user_id:
+                    like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
+                    post_data['has_liked'] = like_doc_ref.get().exists
+                post_data['is_shared'] = False  # Mark as original post
+                posts_list.append(post_data)
+
+            # --- Add shares made by this user ---
+            shares_query = db.collection('shares').where('shared_by_id', '==', target_user_id).order_by('shared_at', direction=firestore.Query.DESCENDING).stream()
+            shares_map = {}
+            for share_doc in shares_query:
+                share_data = share_doc.to_dict()
+                original_post_id = share_data.get('original_post_id')
+                if original_post_id:
+                    # Add this share to the shares_map for the original post
+                    if original_post_id not in shares_map:
+                        shares_map[original_post_id] = []
+                    # Optionally, serialize with FirestoreShareOutputSerializer
+                    share_data['id'] = share_doc.id
+                    shares_map[original_post_id].append(share_data)
+
+                    # Also add the shared post to the posts_list if you want to show it in the user's activity
+                    original_post_ref = db.collection('posts').document(original_post_id)
+                    original_post_doc = original_post_ref.get()
+                    if original_post_doc.exists:
+                        post_data = original_post_doc.to_dict()
+                        post_data['id'] = original_post_doc.id
+                        post_data['is_shared'] = True
+                        post_data['shared_by_id'] = share_data.get('shared_by_id')
+                        post_data['shared_at'] = share_data.get('shared_at')
+                        post_data['has_liked'] = False
+                        if current_user_id:
+                            like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
+                            post_data['has_liked'] = like_doc_ref.get().exists
+                        posts_list.append(post_data)
+
+            # Hydrate author info for the target user
+            authors_map = {}
+            try:
+                author = User.objects.only('id', 'email', 'profile_pic_url', 'is_verified').get(id=target_user_id)
+                author_name = None
+                if hasattr(author, 'student') and author.student.name:
+                    author_name = author.student.name
+                elif hasattr(author, 'organization') and author.organization.organization_name:
+                    author_name = author.organization.organization_name
+
+                authors_map[str(author.id)] = {
+                    "id": author.id,
+                    "email": author.email,
+                    "profile_pic_url": author.profile_pic_url,
+                    "name": author_name,
+                    "is_verified": author.is_verified,
+                }
+            except User.DoesNotExist:
+                pass
+
+            # Sort posts by timestamp or shared_at (most recent first)
+            posts_list.sort(key=lambda x: x.get('shared_at') or x.get('timestamp'), reverse=True)
+
+            serializer = FirestorePostOutputSerializer(
+                posts_list, many=True, context={'authors_map': authors_map, 'shares_map': shares_map}
+            )
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print(f"Error retrieving user posts: {e}")
+            return Response({"error": f"Failed to retrieve posts for user: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class WhoToFollowView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        try:
+            student = Student.objects.select_related('user').get(user=user)
+            student_ct = ContentType.objects.get(model='student')
+            org_ct = ContentType.objects.get(model='organization')
+
+            print("Current user:", user)
+            print("Current student id:", student.id)
+            print("student_ct.id:", student_ct.id)
+            print("org_ct.id:", org_ct.id)
+
+            follows = Follow.objects.filter(
+                follower_content_type=student_ct,
+                follower_object_id=student.id
+            )
+            followed_student_ids = set(int(x) for x in follows.filter(followee_content_type=student_ct).values_list('followee_object_id', flat=True))
+            followed_org_ids = set(int(x) for x in follows.filter(followee_content_type=org_ct).values_list('followee_object_id', flat=True))
+
+            keywords = []
+            if student.department:
+                keywords.append(student.department)
+            if student.faculty:
+                keywords.append(student.faculty)
+            if student.religion:
+                keywords.append(student.religion)
+
+            student_query = Q()
+            for kw in keywords:
+                student_query |= Q(department__icontains=kw) | Q(faculty__icontains=kw) | Q(religion__icontains=kw)
+            recommended_students = Student.objects.filter(student_query).exclude(
+                id__in=followed_student_ids
+            ).exclude(user=user)[:20]
+
+            org_query = Q()
+            for kw in keywords:
+                org_query |= Q(organization_name__icontains=kw) | Q(user__bio__icontains=kw)
+            recommended_orgs = Organization.objects.filter(org_query).exclude(
+                id__in=followed_org_ids
+            )[:20]
+
+            exclusive_orgs = Organization.objects.filter(exclusive=True).exclude(id__in=followed_org_ids)
+
+            print("followed_student_ids:", followed_student_ids)
+            print("followed_org_ids:", followed_org_ids)
+            print("Recommended org IDs:", [org.id for org in (recommended_orgs | exclusive_orgs).distinct()])
+
+            users_data = [
+                {
+                    "type": "student",
+                    "id": s.id,
+                    "user_id": s.user.id,
+                    "name": s.name,
+                    "display_name_slug": getattr(s, "display_name_slug", None),
+                    "profile_pic_url": getattr(s.user, "profile_pic_url", None),
+                    "bio": getattr(s.user, "bio", None),
+                    "is_following": s.id in followed_student_ids,
+                    "is_verified": s.user.is_verified if hasattr(s, 'user') else False,
+                }
+                for s in recommended_students
+            ] + [
+                {
+                    "type": "organization",
+                    "id": org.id,
+                    "user_id": org.user.id,
+                    "name": org.organization_name,
+                    "display_name_slug": org.display_name_slug,
+                    "profile_pic_url": getattr(org.user, "profile_pic_url", None),
+                    "bio": org.user.bio if hasattr(org, 'user') else None,
+                    "exclusive": org.exclusive,
+                    "is_following": org.id in followed_org_ids,
+                    "is_verified": org.user.is_verified if hasattr(org, 'user') else False,
+                }
+                for org in (recommended_orgs | exclusive_orgs).distinct()
+            ]
+
+            users_data = users_data[:20]
+
+            return Response(users_data, status=status.HTTP_200_OK)
+        except Student.DoesNotExist:
+            return Response({"error": "Student profile not found."}, status=status.HTTP_404_NOT_FOUND)
 
