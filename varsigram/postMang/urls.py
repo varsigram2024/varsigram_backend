@@ -19,6 +19,7 @@ urlpatterns = [
     # path('posts/search/', PostSearchView.as_view(), name='post-search'),
     path('feed/', FeedView.as_view(), name='feed'),
     path('official/', ExclusiveOrgsRecentPostsView.as_view(), name='official-orgs-recent-posts'),
+    # Followers Route
     path('users/follow/', GenericFollowView.as_view(), name='follow-user'),
     path('users/unfollow/', GenericUnfollowView.as_view(), name='generic-unfollow'),
     path('users/followers/', ListFollowersView.as_view(), name='list-followers'),
