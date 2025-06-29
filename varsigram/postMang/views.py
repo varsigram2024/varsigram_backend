@@ -6,10 +6,11 @@ from firebase_admin import firestore
 from postMang.apps import db  # Import the Firestore client from the app config
 from .models import (User, Follow, Student, Organization)
 from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, GenericFollowSerializer
-from .utils import get_exclusive_org_user_ids
+from .utils import get_exclusive_org_user_ids, get_student_user_ids
 import logging
 from datetime import datetime, timezone, timedelta
 from django.contrib.contenttypes.models import ContentType
+from django.db.models import Q
 
 
 class IsVerified(permissions.BasePermission):
@@ -129,93 +130,73 @@ class ListFollowingView(generics.ListAPIView):
         )
 logger = logging.getLogger(__name__)
 
-class FeedView(generics.ListAPIView):
+class FeedView(APIView):
     """
-    Feed: Only posts by followed students, ordered by trending_score.
+    Feed: All posts by students, ordered by trending_score.
     """
     permission_classes = [permissions.IsAuthenticated]
-    serializer_class = FirestorePostOutputSerializer
 
-    def get_queryset(self):
-        user = self.request.user
+    def get(self, request):
         posts_limit = 30
+        all_feed_posts = []
 
-        all_feed_posts = {}
+        # Get all user IDs that have a Student profile
+        student_user_ids_str = get_student_user_ids()  # This returns a list of user IDs as strings
+        if not student_user_ids_str:
+            logger.info("No student users found for feed.")
+            return Response([], status=status.HTTP_200_OK)
 
         try:
-            student = Student.objects.select_related('user').get(user=user)
-            student_ct = ContentType.objects.get(model='student')
-            follows = Follow.objects.filter(
-                follower_content_type=student_ct,
-                follower_object_id=student.id,
-                followee_content_type=student_ct
-            )
-            followee_student_ids = list(
-                follows.values_list('followee_object_id', flat=True)
-            )
-            followed_user_ids = list(
-                User.objects.filter(student__id__in=followee_student_ids).values_list('id', flat=True)
-            )
-            followed_user_ids_str = [str(uid) for uid in followed_user_ids]
+            student_user_ids_for_query = student_user_ids_str[:10]  # Firestore 'in' query limit
+            posts_query = db.collection('posts') \
+                .where('author_id', 'in', student_user_ids_for_query) \
+                .order_by('trending_score', direction=firestore.Query.DESCENDING) \
+                    .order_by('timestamp', direction=firestore.Query.DESCENDING) \
+                    .limit(posts_limit)
 
-            if followed_user_ids_str:
-                # Firestore 'in' queries are limited to 10 items
-                user_ids_for_query = followed_user_ids_str[:10]
+            current_user_id = str(request.user.id)  if request.user.is_authenticated else None
+
+            for doc in posts_query.stream():
+                post_data = doc.to_dict()
+                post_data['id'] = doc.id
+                post_data['has_liked'] = False  # Default to False, will be updated later
+                if current_user_id:
+                    like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
+                    post_data['has_liked'] = like_doc_ref.get().exists
+                all_feed_posts.append(post_data)
+        
+        
+            authors_map = {}
+            for user_id in student_user_ids_str:
+                author_name = None
+                display_name_slug = None
                 try:
-                    posts_query = db.collection('posts') \
-                        .where('author_id', 'in', user_ids_for_query) \
-                        .order_by('trending_score', direction=firestore.Query.DESCENDING) \
-                        .order_by('timestamp', direction=firestore.Query.DESCENDING) \
-                        .limit(posts_limit)
-                    for doc in posts_query.stream():
-                        post_data = doc.to_dict()
-                        post_data['id'] = doc.id
-                        all_feed_posts[doc.id] = post_data
-                except Exception as e:
-                    logger.error(f"Error fetching trending posts for feed: {e}", exc_info=True)
-            else:
-                logger.info(f"No followed students found for user {user.id}")
+                    author = User.objects.get(id=user_id)
+                    if hasattr(author, 'student'):
+                        author_name = author.student.name
+                        display_name_slug = getattr(author.student, 'display_name_slug', None)
+                    elif hasattr(author, 'organization'):
+                        author_name = author.organization.organization_name
+                        display_name_slug = getattr(author.organization, 'display_name_slug', None)
+                    
+                    authors_map[str(author.id)] = {
+                    "id": author.id,
+                    "email": author.email,
+                    "profile_pic_url": author.profile_pic_url,
+                    "name": author_name,
+                    "display_name_slug": display_name_slug,
+                    "is_verified": author.is_verified
+                }
+                except User.DoesNotExist:
+                    continue
+                
 
-        except Student.DoesNotExist:
-            logger.info(f"Student profile not found for user {user.id}. No feed available.")
-            return []
-
-        final_posts = list(all_feed_posts.values())
-
-        user_id_str = str(user.id)
-        for post in final_posts:
-            post_id = post.get('id')
-            try:
-                like_doc = db.collection('posts').document(post_id).collection('likes').document(user_id_str).get()
-                post['has_liked'] = like_doc.exists
-            except Exception as e:
-                logger.warning(f"Error checking like status for post {post_id} by user {user_id_str}: {e}")
-                post['has_liked'] = False
-
-        return final_posts
-
-    def list(self, request, *args, **kwargs):
-        posts_data = self.get_queryset()
-        author_ids = list(set(str(post['author_id']) for post in posts_data if 'author_id' in post))
-        authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
-        authors_map = {}
-        for author in authors_from_postgres:
-            author_name = None
-            display_name_slug = None
-            if hasattr(author, 'student'):
-                author_name = author.student.name
-                display_name_slug = getattr(author.student, 'display_name_slug', None)
-            authors_map[str(author.id)] = {
-                "id": author.id,
-                "email": author.email,
-                "profile_pic_url": author.profile_pic_url,
-                "name": author_name,
-                "display_name_slug": display_name_slug,
-                "is_verified": author.is_verified
-            }
-        serializer = self.get_serializer(posts_data, many=True, context={'authors_map': authors_map})
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
+            serializer = FirestorePostOutputSerializer(all_feed_posts, many=True, context={'authors_map': authors_map})
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            logger.error(f"Error fetching feed posts: {str(e)}")
+            return Response({"error": f"Failed to retrieve feed posts: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # Custom Permission Example (simplified)
 class IsFirestoreDocOwner(permissions.BasePermission):

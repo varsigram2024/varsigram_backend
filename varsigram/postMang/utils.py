@@ -1,5 +1,5 @@
 from rest_framework import permissions
-from .models import Organization
+from .models import Organization, User
 
 # class IsOwnerOrReadOnly(permissions.BasePermission):
 #     """
@@ -25,4 +25,14 @@ def get_exclusive_org_user_ids():
     )
     exclusive_org_user_ids_str = [str(uid) for uid in exclusive_org_user_ids]
     return exclusive_org_user_ids_str
+
+def get_student_user_ids():
+    """
+    Returns a list of user_id strings for organizations with exclusive=False.
+    """
+    student_user_ids = list(
+        User.objects.filter(student__isnull=False).values_list('id', flat=True)
+    )
+    student_user_ids_str = [str(uid) for uid in student_user_ids]
+    return student_user_ids_str
 
