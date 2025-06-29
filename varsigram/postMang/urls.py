@@ -4,7 +4,8 @@ from .views import (
     CommentCreateFirestoreView, CommentListFirestoreView,
     LikeToggleFirestoreView, LikeListFirestoreView,
     UserPostsFirestoreView, FeedView,
-    WhoToFollowView, ExclusiveOrgsRecentPostsView
+    WhoToFollowView, ExclusiveOrgsRecentPostsView,
+    VerifiedOrgBadge
 )
 
 urlpatterns = [
@@ -25,4 +26,5 @@ urlpatterns = [
     path('users/followers/', ListFollowersView.as_view(), name='list-followers'),
     path('users/following/', ListFollowingView.as_view(), name='list-following'),
     path('who-to-follow/', WhoToFollowView.as_view(), name='who-to-follow'),
+    path('verified-org-badge/', VerifiedOrgBadge.as_view(), name='verified-org-badge'),
 ]

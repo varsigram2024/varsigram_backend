@@ -469,3 +469,17 @@ Most endpoints require authentication. Authentication is handled using token-bas
 **Note:**  
 - All follow/unfollow actions require the user to be authenticated and to be a student.
 - The "Who To Follow" endpoint will always include organizations marked as exclusive, and will not return organizations the student already follows.
+
+...
+### Organization Verification
+
+*   **`GET /verified-org-badge/`**  [name='verified-org-badge']
+
+    *   Description: Checks if the authenticated organization is both exclusive and verified.
+    *   Request: `GET`
+    *   Authentication: Required
+    *   Response (200 OK): Returns `{"is_verified": true}` if the organization is exclusive and verified, otherwise `{"is_verified": false}`.
+    *   Response (404 Not Found): If the organization profile is not found.
+
+...
+

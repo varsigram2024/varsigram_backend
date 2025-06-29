@@ -1034,3 +1034,17 @@ class WhoToFollowView(APIView):
         except Student.DoesNotExist:
             return Response({"error": "Student profile not found."}, status=status.HTTP_404_NOT_FOUND)
 
+class VerifiedOrgBadge(APIView):
+    """Checks if the Organization is Exclusive and Verified"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        try:
+            org = Organization.objects.get(user=user)
+            if org.exclusive and org.user.is_verified:
+                return Response({"is_verified": True}, status=status.HTTP_200_OK)
+            else:
+                return Response({"is_verified": False}, status=status.HTTP_200_OK)
+        except Organization.DoesNotExist:
+            return Response({"error": "Organization not found."}, status=status.HTTP_404_NOT_FOUND)
