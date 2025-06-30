@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
+from auth.jwt import JWTAuthentication
 
 
 class IsVerified(permissions.BasePermission):
@@ -27,9 +28,11 @@ class IsVerified(permissions.BasePermission):
 class GenericFollowView(generics.CreateAPIView):
     serializer_class = GenericFollowSerializer
     permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
 
 class GenericUnfollowView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
 
     def post(self, request):
         follower_type = request.data.get('follower_type')
@@ -76,6 +79,7 @@ class GenericUnfollowView(APIView):
 class ListFollowersView(generics.ListAPIView):
     serializer_class = GenericFollowSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    authentication_classes = [JWTAuthentication]
 
     def get_queryset(self):
         followee_type = self.request.query_params.get('followee_type')
@@ -104,6 +108,7 @@ class ListFollowersView(generics.ListAPIView):
 class ListFollowingView(generics.ListAPIView):
     serializer_class = GenericFollowSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    authentication_classes = [JWTAuthentication]
 
     def get_queryset(self):
         follower_type = self.request.query_params.get('follower_type')
@@ -135,6 +140,7 @@ class FeedView(APIView):
     Feed: All posts by students, ordered by trending_score.
     """
     permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
 
     def get(self, request):
         posts_limit = 30
@@ -217,6 +223,7 @@ class PostListCreateFirestoreView(APIView):
     Create a new post or list all posts from Firestore.
     """
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    authentication_classes = [JWTAuthentication]
 
     def get(self, request):
         try:
@@ -307,6 +314,7 @@ class PostDetailFirestoreView(APIView):
     If using slugs, you'd query: db.collection('posts').where('slug', '==', slug_value).limit(1).stream()
     """
     permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsFirestoreDocOwner]
+    authentication_classes = [JWTAuthentication]
 
     def get_post_doc_and_data(self, post_id_or_slug, is_slug=False):
         try:
@@ -435,6 +443,7 @@ class CommentCreateFirestoreView(APIView):
     URL: /api/posts/{post_id}/comments/
     """
     permission_classes = [permissions.IsAuthenticated, IsVerified]
+    authentication_classes = [JWTAuthentication]
 
     def post(self, request, post_id): # Get post_id from URL
         user_id = str(request.user.id) # Ensure user ID is a string for Firestore
@@ -509,6 +518,7 @@ class CommentListFirestoreView(APIView):
     URL: /api/posts/{post_id}/comments/
     """
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    authentication_classes = [JWTAuthentication]
 
     def get(self, request, post_id):
         post_ref = db.collection('posts').document(post_id)
@@ -604,6 +614,7 @@ class LikeToggleFirestoreView(APIView):
     URL: /api/posts/{post_id}/like/
     """
     permission_classes = [permissions.IsAuthenticated, IsVerified] # Ensure user is authenticated and verified
+    authentication_classes = [JWTAuthentication]
 
     def post(self, request, post_id): # post_id from URL
         user_id = str(request.user.id)
@@ -662,6 +673,7 @@ class LikeListFirestoreView(APIView):
     URL: /api/posts/{post_id}/likes/
     """
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    authentication_classes = [JWTAuthentication]
 
     def get(self, request, post_id):
         post_ref = db.collection('posts').document(post_id)
@@ -804,6 +816,7 @@ class ExclusiveOrgsRecentPostsView(APIView):
     Only posts authored by exclusive organizations are included.
     """
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    authentication_classes = [JWTAuthentication]
 
     def get(self, request):
         posts_limit = 20
@@ -867,6 +880,7 @@ class UserPostsFirestoreView(APIView):
     URL: /api/users/{user_id}/posts/
     """
     permission_classes = [permissions.IsAuthenticatedOrReadOnly, IsVerified]
+    authentication_classes = [JWTAuthentication]
 
     def get(self, request, user_id):
         target_user_id = user_id
@@ -951,6 +965,7 @@ class UserPostsFirestoreView(APIView):
 
 class WhoToFollowView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
 
     def get(self, request):
         user = request.user
@@ -1037,6 +1052,7 @@ class WhoToFollowView(APIView):
 class VerifiedOrgBadge(APIView):
     """Checks if the Organization is Exclusive and Verified"""
     permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
 
     def get(self, request):
         user = request.user

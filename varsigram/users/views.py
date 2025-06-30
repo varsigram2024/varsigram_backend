@@ -230,60 +230,56 @@ class UserProfileView(generics.GenericAPIView):
         except NotFound as e:
             raise e
 
-class UserSearchView(generics.GenericAPIView):
-    """ View for searching users """
+from rest_framework.generics import ListAPIView
+
+class UserSearchView(ListAPIView):
+    """ View for searching users (students or organizations) """
     permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = None  # Set this to your UserSerializer if you have one
 
-    def get(self, request):
-        # Retrieve the search parameters
-        faculty = request.query_params.get('faculty', None)
-        department = request.query_params.get('department', None)
-        search_type = request.query_params.get('type', None)  # This will specify if we're searching for 'students' or 'organizations'
+    def get_queryset(self):
+        faculty = self.request.query_params.get('faculty')
+        department = self.request.query_params.get('department')
+        search_type = self.request.query_params.get('type')
 
-        # Start with the base query for filtering the Users
         users_query = User.objects.all()
 
-        # If searching for Students:
         if search_type == 'student':
-            # Filter by faculty and department if specified and if the user is a student
             if faculty:
                 users_query = users_query.filter(student__faculty__icontains=faculty)
             if department:
                 users_query = users_query.filter(student__department__icontains=department)
-
-            # Serialize the student data
-            user_data = []
-            for user in users_query:
-                if hasattr(user, 'student'):
-                    student = user.student
-                    user_data.append({
-                        'email': user.email,
-                        'faculty': student.faculty,
-                        'department': student.department,
-                        'name': student.name,
-                        'display_name_slug': student.display_name_slug
-                    })
-
-        # If searching for Organizations:
+            users_query = users_query.filter(student__isnull=False)
         elif search_type == 'organization':
-            # Filter only users who are organizations
             users_query = users_query.filter(organization__isnull=False)
+        # else: all users
 
-            # Serialize the organization data
-            user_data = []
-            for user in users_query:
-                if hasattr(user, 'organization'):
-                    organization = user.organization
-                    user_data.append({
-                        'email': user.email,
-                        'organization_name': organization.organization_name,
-                        'display_name_slug': organization.display_name_slug,
-                    })
-        
-        # If no 'type' is specified, return all users (students + organizations)
-        else:
-            user_data = []
-            for user in users_query:
+        return users_query
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        search_type = request.query_params.get('type')
+        user_data = []
+
+        for user in queryset:
+            if search_type == 'student' and hasattr(user, 'student'):
+                student = user.student
+                user_data.append({
+                    'email': user.email,
+                    'faculty': student.faculty,
+                    'department': student.department,
+                    'name': student.name,
+                    'display_name_slug': student.display_name_slug
+                })
+            elif search_type == 'organization' and hasattr(user, 'organization'):
+                organization = user.organization
+                user_data.append({
+                    'email': user.email,
+                    'organization_name': organization.organization_name,
+                    'display_name_slug': organization.display_name_slug,
+                })
+            elif not search_type:
                 if hasattr(user, 'student'):
                     student = user.student
                     user_data.append({
@@ -299,7 +295,6 @@ class UserSearchView(generics.GenericAPIView):
                         'organization_name': organization.organization_name,
                         'display_name_slug': organization.display_name_slug,
                     })
-
         return Response(user_data, status=status.HTTP_200_OK)
 
 class UserDeactivateView(generics.GenericAPIView):
@@ -345,6 +340,7 @@ class UserReactivateView(generics.GenericAPIView):
 class SendOTPView(generics.GenericAPIView):
     """ Send OTP to user email """
     permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
     serializer_class = SendOTPSerializer
 
     def post(self, request):
@@ -364,6 +360,7 @@ class SendOTPView(generics.GenericAPIView):
 class VerifyOTPView(generics.GenericAPIView):
     """ Verify OTP for user """
     permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
     serializer_class = OTPVerificationSerializer
 
     def post(self, request):
@@ -381,6 +378,7 @@ class VerifyOTPView(generics.GenericAPIView):
 class CheckUserVerification(APIView):
     """ Check if the user is verified """
     permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
 
     def get(self, request):
         user = request.user
@@ -391,6 +389,7 @@ class CheckUserVerification(APIView):
 
 class GetSignedUploadUrlView(APIView):
     permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
 
     def post(self, request):
         file_name = request.data.get('file_name')
@@ -566,6 +565,7 @@ class PublicProfileView(APIView):
 
 class GetSignedPostMediaUploadUrlView(APIView):
     permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
 
     def post(self, request):
         file_name = request.data.get('file_name')
