@@ -507,7 +507,7 @@ class CommentCreateFirestoreView(APIView):
                 return Response({"error": f"Transaction failed: {str(ve)}"}, status=status.HTTP_400_BAD_REQUEST)
             except Exception as e:
                 # Catch any other Firestore errors or general exceptions
-                print(f"Error creating comment with transaction: {e}") # Log the full error for debugging
+                # print(f"Error creating comment with transaction: {e}") # Log the full error for debugging
                 return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -960,7 +960,7 @@ class UserPostsFirestoreView(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         except Exception as e:
-            print(f"Error retrieving user posts: {e}")
+            # print(f"Error retrieving user posts: {e}")
             return Response({"error": f"Failed to retrieve posts for user: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class WhoToFollowView(APIView):
@@ -974,10 +974,10 @@ class WhoToFollowView(APIView):
             student_ct = ContentType.objects.get(model='student')
             org_ct = ContentType.objects.get(model='organization')
 
-            print("Current user:", user)
-            print("Current student id:", student.id)
-            print("student_ct.id:", student_ct.id)
-            print("org_ct.id:", org_ct.id)
+            # print("Current user:", user)
+            # print("Current student id:", student.id)
+            # print("student_ct.id:", student_ct.id)
+            # print("org_ct.id:", org_ct.id)
 
             follows = Follow.objects.filter(
                 follower_content_type=student_ct,
@@ -1010,9 +1010,9 @@ class WhoToFollowView(APIView):
 
             exclusive_orgs = Organization.objects.filter(exclusive=True).exclude(id__in=followed_org_ids)
 
-            print("followed_student_ids:", followed_student_ids)
-            print("followed_org_ids:", followed_org_ids)
-            print("Recommended org IDs:", [org.id for org in (recommended_orgs | exclusive_orgs).distinct()])
+            # print("followed_student_ids:", followed_student_ids)
+            # print("followed_org_ids:", followed_org_ids)
+            # print("Recommended org IDs:", [org.id for org in (recommended_orgs | exclusive_orgs).distinct()])
 
             users_data = [
                 {

@@ -48,7 +48,7 @@ class RegisterView(generics.GenericAPIView):
 
     def post(self, request, *args, **kwargs):
         """ Handle the POST request for user registration. """
-        print(f"Request Data from Frontend {request.data}")
+        # print(f"Request Data from Frontend {request.data}")
         # Validate and create user, student, or organization
         data = clean_data(request.data)
         # print(f"Validated Data => {data}")
@@ -70,7 +70,7 @@ class RegisterView(generics.GenericAPIView):
                     'error': 'An error occurred while registering the user.',
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         else:
-            print(f"Serializer => {serializer.errors}")
+            # print(f"Serializer => {serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -478,7 +478,7 @@ class GetSignedUploadUrlView(APIView):
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
-            print(f"Error generating signed URL: {e}")
+            # print(f"Error generating signed URL: {e}")
             return Response(
                 {"error": f"Could not generate signed URL: {e}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -630,7 +630,7 @@ class GetSignedPostMediaUploadUrlView(APIView):
                 "public_download_url": public_download_url
             }, status=status.HTTP_200_OK)
         except Exception as e:
-            print(f"Error generating signed URL: {e}")
+            # print(f"Error generating signed URL: {e}")
             return Response(
                 {"error": f"Could not generate signed URL: {e}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
