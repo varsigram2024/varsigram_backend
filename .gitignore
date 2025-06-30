@@ -164,3 +164,5 @@ cython_debug/
 varsigram/config/versigram-pd-firebase-adminsdk.json
 varsigram/config/versigram-pd-firebase-adminsdk-fbsvc-bdc5bbc735.json
 varsigram/config/serviceAccount.json
+varsigram/config/cors.json
+auto_setup
