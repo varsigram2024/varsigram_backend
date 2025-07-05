@@ -4,7 +4,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework import status, generics
 # from django.core.exceptions import ObjectDoesNotExist
 from rest_framework.exceptions import NotFound
-from rest_framework_jwt.settings import api_settings
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from .models import User, Student, Organization
 from postMang.models import Follow
 from .serializer import ( 
@@ -15,16 +15,18 @@ from .serializer import (
     UserDeactivateSerializer, UserReactivateSerializer,
     OTPVerificationSerializer, SendOTPSerializer
 )
-from django.core.mail import send_mail
-from .utils import generate_jwt_token, clean_data
+# from django.core.mail import send_mail
+from .utils import clean_data
+from django.contrib.auth import get_user_model
 from django.utils.http import urlsafe_base64_decode
 from postMang.apps import get_firebase_storage_client
+from rest_framework_simplejwt.authentication import JWTAuthentication
 # from django.core.exceptions import PermissionDenied, AuthenticationFailed
-from django.conf import settings
+# from django.conf import settings
 # from auth.oauth import (
 #     GoogleSdkLoginFlowService,
 # )
-from auth.jwt import JWTAuthentication
+# from auth.jwt import JWTAuthentication
 from django.contrib.auth import authenticate, login, logout
 from .tasks import send_otp_email
 # from firebase_admin import storage
@@ -48,58 +50,45 @@ class RegisterView(generics.GenericAPIView):
     serializer_class = RegisterSerializer
 
     def post(self, request, *args, **kwargs):
-        """ Handle the POST request for user registration. """
-        # print(f"Request Data from Frontend {request.data}")
-        # Validate and create user, student, or organization
-        data = clean_data(request.data)
-        # print(f"Validated Data => {data}")
+        data = clean_data(request.data) # Assuming clean_data function exists elsewhere
         serializer = self.serializer_class(data=data)
-        if serializer.is_valid():
-            # print("I was valid")
+        if serializer.is_valid(raise_exception=True): # Use raise_exception=True for cleaner error handling
             user = serializer.save()
 
-            if user:
-                login(request, user)
+            
+            # Get both access and refresh tokens from the serializer's method
+            tokens = serializer.get_tokens(user)
+            
 
-                token = serializer.get_token(user)
-                return Response({
-                    'message': 'User registered successfully',
-                    'token': token
-                }, status=status.HTTP_201_CREATED)
-            else:
-                return Response({
-                    'error': 'An error occurred while registering the user.',
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        else:
-            # print(f"Serializer => {serializer.errors}")
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                'message': 'User registered successfully',
+                'access': tokens['access'],   # Return the access token
+                'refresh': tokens['refresh'], # Return the refresh token
+            }, status=status.HTTP_201_CREATED)
+        # No need for else: return Response(serializer.errors...) because of raise_exception=True
 
 
 class LoginView(generics.GenericAPIView):
     """ View to log in a user and return a JWT token. """
     permission_classes = [AllowAny]
     serializer_class = LoginSerializer
-    authentication_classes = [JWTAuthentication]
 
     def post(self, request, *args, **kwargs):
-        """ Handle POST request for user login. """
-        # Deserialize the data and validate user credentials
         serializer = self.get_serializer(data=request.data)
-        if serializer.is_valid():
+        if serializer.is_valid(raise_exception=True): # Use raise_exception=True
             user = serializer.validated_data['user']
-            login(request, user)
-            # Generate JWT token
-            token = self.get_jwt_token(user)
+
+            
+            # Get both access and refresh tokens from the serializer's method
+            tokens = serializer.get_tokens(serializer.validated_data) # Pass validated_data as obj to get_tokens
+            
+
             return Response({
                 'message': 'Login successful',
-                'token': token
+                'access': tokens['access'],
+                'refresh': tokens['refresh'],
             }, status=status.HTTP_200_OK)
-        else:
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    def get_jwt_token(self, user):
-        """ Generate a JWT token for the user. """
-        return generate_jwt_token(user)
+        # No need for else: return Response(serializer.errors...)
 
 class UserLogout(APIView):
     """ logout user """
@@ -125,36 +114,46 @@ class PasswordResetView(generics.GenericAPIView):
 
 class PasswordResetConfirmView(generics.GenericAPIView):
     """ Reset user password """
-    permission_classes = []
+    permission_classes = [] # Allow unauthenticated access
     serializer_class = PasswordResetConfirmSerializer
+    User = get_user_model() # Make sure User model is defined
 
     def get(self, request, *args, **kwargs):
+        # This method should remain as the last version I provided,
+        # which validates uid and token using Django's PasswordResetTokenGenerator
+        # and returns "Validation Successful".
+        # It's primarily for the frontend to check link validity upon page load.
+
         uidb64 = request.GET.get('uid')
         token = request.GET.get('token')
 
-        user_id = int(urlsafe_base64_decode(uidb64).decode())
-        user = User.objects.get(id=user_id)
+        if not uidb64 or not token:
+            return Response({"error": "Missing UID or Token"}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not user:
-            return Response({"error": "Invalid User ID"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-        jwt_decode_handler = api_settings.JWT_DECODE_HANDLER
         try:
-            jwt_decode_handler(token)
-        except Exception:
-            return Response({"error": "Invalid Token"},status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            user_id = urlsafe_base64_decode(uidb64).decode()
+            user = self.User.objects.get(pk=user_id)
+        except (TypeError, ValueError, OverflowError, self.User.DoesNotExist):
+            user = None
+
+        if user is None:
+            return Response({"error": "Invalid User ID or Link"}, status=status.HTTP_400_BAD_REQUEST)
+
+        token_generator = PasswordResetTokenGenerator()
+        if not token_generator.check_token(user, token):
+            return Response({"error": "Invalid or Expired Token"}, status=status.HTTP_400_BAD_REQUEST)
+
         return Response({"message": "Validation Successful"}, status=status.HTTP_200_OK)
 
-    def post(self, request, *args, **kwargs):
-        uidb64 = request.GET.get('uid')
-        user_id = int(urlsafe_base64_decode(uidb64).decode())
-        user = User.objects.get(id=user_id)
 
-        serializer = self.serializer_class(data=request.data, context={'user': user})
+    def post(self, request, *args, **kwargs):
+        # The serializer now handles uid and token extraction/validation
+        serializer = self.serializer_class(data=request.data)
         if serializer.is_valid(raise_exception=True):
-            serializer.save()
+            serializer.save() # The serializer handles setting the new password
             return Response({"message": "Password reset successful"}, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # If serializer is not valid, DRF's raise_exception=True will handle the error response automatically
+        # No need for: return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class ChangePasswordView(generics.GenericAPIView):
     """ Change user password """

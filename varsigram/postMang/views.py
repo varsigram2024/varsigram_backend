@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
-from auth.jwt import JWTAuthentication
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 
 # Initialize Firestore client

@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-import datetime
+from datetime import timedelta
 from dotenv import load_dotenv
 
 # Load .env variables for local development.
@@ -21,7 +21,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
-    'rest_framework_jwt',
+    'rest_framework_simplejwt',
     'rest_framework.authtoken',
     'django_filters',
     # 'social_django', # Uncomment if you enable it later
@@ -101,21 +101,44 @@ REST_FRAMEWORK = {
         'rest_framework.filters.SearchFilter',
     ),
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework.authentication.TokenAuthentication',
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
-        'rest_framework.authentication.BasicAuthentication',
-        'rest_framework_jwt.authentication.JSONWebTokenAuthentication',
+        'rest_framework.authentication.TokenAuthentication',
     ),
 }
 
 #JWT Configuration
-JWT_AUTH = {
-    'JWT_SECRET_KEY': os.environ.get('SECRET_KEY'), # Still from env var
-    'JWT_ALGORITHM': 'HS256',
-    'JWT_ALLOW_REFRESH': True,
-    'JWT_EXPIRATION_DELTA': datetime.timedelta(hours=3),
-    'JWT_REFRESH_EXPIRATION_DELTA': datetime.timedelta(days=7),
-    'JWT_AUTH_HEADER_PREFIX': 'Bearer',
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=5),  # Recommended: short lifetime for access tokens
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),   # Longer lifetime for refresh tokens
+    'ROTATE_REFRESH_TOKENS': True,                  # Generates a new refresh token on refresh
+    'BLACKLIST_AFTER_ROTATION': True,               # Invalidates old refresh token (requires token_blacklist app)
+    'UPDATE_LAST_LOGIN': False,                     # Set to True if you want to update User.last_login
+
+    'ALGORITHM': 'HS256',                           # Default algorithm for symmetric keys
+    'SIGNING_KEY': os.environ.get('SECRET_KEY'), # Crucial: uses your Django SECRET_KEY for signing
+
+    'VERIFYING_KEY': None,
+    'AUDIENCE': None,
+    'ISSUER': None,
+    'JWK_URL': None,
+    'LEEWAY': 0,
+
+    'AUTH_HEADER_TYPES': ('Bearer',),               # Standard header type
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',                          # Field in your user model for user ID
+    'USER_ID_CLAIM': 'user_id',                     # Claim name in the token payload for user ID
+    'USER_AUTHENTICATION_RULE': 'rest_framework_simplejwt.authentication.default_user_authentication_rule',
+
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_TYPE_CLAIM': 'token_type',
+    'TOKEN_USER_CLASS': 'rest_framework_simplejwt.models.TokenUser',
+
+    'JTI_CLAIM': 'jti',
+
+    'SLIDING_TOKEN_REFRESH_EXP_CLAIM': 'refresh_exp',
+    'SLIDING_TOKEN_LIFETIME': timedelta(minutes=5),
+    'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
 }
 
 #Email Configuration (common parts, sensitive parts in production.py)
