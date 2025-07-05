@@ -18,6 +18,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4 # Action to clone your repository
 
+      - name: Create logs directory for CI tests
+        run: mkdir -p varsigram/logs # Creates 'logs' inside your 'varsigram' project folder
+        working-directory: ${{ github.workspace }} # Ensure this command runs from the repo root
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -98,6 +102,9 @@ jobs:
             echo "Changing to Django project root (varsigram/)..."
             cd varsigram
 
+            echo "Creating logs directory if it doesn't exist..."
+            mkdir -p logs
+
             echo "Running Django database makemigrations..."
             python manage.py makemigrations --noinput --settings=varsigram.settings.staging
 
@@ -162,6 +169,9 @@ jobs:
 
             echo "Changing to Django project root (varsigram/)..."
             cd varsigram
+
+            echo "Creating logs directory if it doesn't exist..."
+            mkdir -p logs
 
             echo "Running Django database makemigrations..."
             python manage.py makemigrations --noinput --settings=varsigram.settings.production
