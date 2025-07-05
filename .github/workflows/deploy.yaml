@@ -95,6 +95,9 @@ jobs:
             echo "Installing/updating Python dependencies..."
             pip install -r requirements.txt
 
+            echo "Running Django database makemigrations..."
+            python manage.py makemigrations --noinput --settings=varsigram.settings.staging
+
             echo "Running Django database migrations..."
             python manage.py migrate --noinput --settings=varsigram.settings.staging
 
@@ -153,6 +156,9 @@ jobs:
 
             echo "Installing/updating Python dependencies..."
             pip install -r requirements.txt
+
+            echo "Running Django database makemigrations..."
+            python manage.py makemigrations --noinput --settings=varsigram.settings.production
 
             echo "Running Django database migrations..."
             python manage.py migrate --noinput --settings=varsigram.settings.production
