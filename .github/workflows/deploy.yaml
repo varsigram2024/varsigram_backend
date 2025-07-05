@@ -47,7 +47,7 @@ jobs:
         # Remove '|| true' if you want the job to fail on test failures.
         run: |
           python manage.py test
-        working-directory: ./ # Adjust if manage.py is not in the repository root
+        working-directory: ./varsigram # Adjust if manage.py is not in the repository root
 
 
   # ----------------------------------------------
@@ -94,6 +94,9 @@ jobs:
 
             echo "Installing/updating Python dependencies..."
             pip install -r requirements.txt
+
+            echo "Changing to Django project root (varsigram/)..."
+            cd varsigram
 
             echo "Running Django database makemigrations..."
             python manage.py makemigrations --noinput --settings=varsigram.settings.staging
@@ -156,6 +159,9 @@ jobs:
 
             echo "Installing/updating Python dependencies..."
             pip install -r requirements.txt
+
+            echo "Changing to Django project root (varsigram/)..."
+            cd varsigram
 
             echo "Running Django database makemigrations..."
             python manage.py makemigrations --noinput --settings=varsigram.settings.production
