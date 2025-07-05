@@ -1,0 +1,169 @@
+name: Django CI/CD to Hostinger VPS
+
+on:
+  push:
+    branches:
+      - develop # Triggers CI and staging deploy on push to 'develop'
+      - main    # Triggers CI and production deploy on push to 'main'                                                          
+
+jobs:
+  # ----------------------------------------------
+  # 1. Build and Test Job (CI - Continuous Integration)
+  #    Runs on every push to 'develop' or 'main'
+  # ----------------------------------------------
+  build_and_test:
+    runs-on: ubuntu-latest # GitHub-hosted runner for CI tasks
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4 # Action to clone your repository
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.12'
+          cache: 'pip' # Cache pip dependencies for faster builds
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+        working-directory: ./
+
+      - name: Configure test environment variables
+        env:
+          # Set DEBUG to True for tests in CI
+          DJANGO_DEBUG: "True"
+          # If you implemented the SQLite switch in settings.py:
+          USE_SQLITE_FOR_TESTS: "True"
+          # Ensure your main settings.py or base.py uses os.getenv for these
+          # For example, your SECRET_KEY, unless you hardcode a dummy for tests
+          # DJANGO_SECRET_KEY: a-dummy-key-for-tests-only # If your SECRET_KEY is strict
+        run: |
+          echo "Test environment variables configured. DEBUG set to True, SQLite for tests."
+
+      - name: Run Django tests
+        # The '|| true' is for demonstration; in real CI, you'd want tests to pass.
+        # Remove '|| true' if you want the job to fail on test failures.
+        run: |
+          python manage.py test
+        working-directory: ./ # Adjust if manage.py is not in the repository root
+
+
+  # ----------------------------------------------
+  # 2. Deploy to Staging Job (CD - Continuous Deployment)
+  #    Runs only if 'build_and_test' passes and push is to 'develop'
+  # ----------------------------------------------
+  deploy_staging:
+    needs: build_and_test # This job depends on 'build_and_test' succeeding
+    if: github.ref == 'refs/heads/develop' # Condition to run only on 'develop' branch push
+    runs-on: ubuntu-latest # GitHub-hosted runner
+
+    environment:
+      name: Staging
+      url: https://staging.varsigram.com # Your actual staging URL
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_STAGING }}
+
+      - name: Deploy to Staging VPS
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+              ${{ secrets.SSH_USER_STAGING }}@${{ secrets.SSH_HOST_STAGING }} << 'EOF'
+            set -e
+
+            echo "Navigating to project directory: ${{ secrets.PROJECT_PATH_STAGING }}"
+            cd ${{ secrets.PROJECT_PATH_STAGING }}
+
+            echo "Pulling latest code from Git (develop branch)..."
+            git pull origin develop
+
+            if [ ! -d "${{ secrets.VENV_PATH_STAGING }}" ]; then
+                echo "Creating virtual environment at ${{ secrets.VENV_PATH_STAGING }}"
+                python3 -m venv ${{ secrets.VENV_PATH_STAGING }}
+            fi
+
+            echo "Activating virtual environment..."
+            source ${{ secrets.VENV_PATH_STAGING }}/bin/activate
+
+            echo "Installing/updating Python dependencies..."
+            pip install -r requirements.txt
+
+            echo "Running Django database migrations..."
+            python manage.py migrate --noinput --settings=varsigram.settings.staging
+
+            echo "Collecting static files..."
+            python manage.py collectstatic --noinput --settings=varsigram.settings.staging
+
+            echo "Restarting Gunicorn service: ${{ secrets.SERVICE_NAME_STAGING }}"
+            sudo systemctl restart ${{ secrets.SERVICE_NAME_STAGING }}
+
+            echo "Deployment to Staging complete!"
+          EOF
+        env:
+          DJANGO_SETTINGS_MODULE: varsigram.settings.staging
+
+  # ----------------------------------------------
+  # 3. Deploy to Production Job (CD - Continuous Deployment)
+  #    Runs only if 'build_and_test' passes and push is to 'main'
+  # ----------------------------------------------
+  deploy_production:
+    needs: build_and_test # This job depends on 'build_and_test' succeeding
+    if: github.ref == 'refs/heads/main' # Condition to run only on 'main' branch push
+    runs-on: ubuntu-latest # GitHub-hosted runner
+
+    environment:
+      name: Production
+      url: https://api.varsigram.com # Your actual production URL
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_PRODUCTION }}
+
+      - name: Deploy to Production VPS
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+              ${{ secrets.SSH_USER_PRODUCTION }}@${{ secrets.SSH_HOST_PRODUCTION }} << 'EOF'
+            set -e
+
+            echo "Navigating to project directory: ${{ secrets.PROJECT_PATH_PRODUCTION }}"
+            cd ${{ secrets.PROJECT_PATH_PRODUCTION }}
+
+            echo "Pulling latest code from Git (main branch)..."
+            git pull origin main
+
+            if [ ! -d "${{ secrets.VENV_PATH_PRODUCTION }}" ]; then
+                echo "Creating virtual environment at ${{ secrets.VENV_PATH_PRODUCTION }}"
+                python3 -m venv ${{ secrets.VENV_PATH_PRODUCTION }}
+            fi
+
+            echo "Activating virtual environment..."
+            source ${{ secrets.VENV_PATH_PRODUCTION }}/bin/activate
+
+            echo "Installing/updating Python dependencies..."
+            pip install -r requirements.txt
+
+            echo "Running Django database migrations..."
+            python manage.py migrate --noinput --settings=varsigram.settings.production
+
+            echo "Collecting static files..."
+            python manage.py collectstatic --noinput --settings=varsigram.settings.production
+
+            echo "Restarting Gunicorn service: ${{ secrets.SERVICE_NAME_PRODUCTION }}"
+            sudo systemctl restart ${{ secrets.SERVICE_NAME_PRODUCTION }}
+
+            echo "Deployment to Production complete!"
+          EOF
+        env:
+          DJANGO_SETTINGS_MODULE: varsigram.settings.production

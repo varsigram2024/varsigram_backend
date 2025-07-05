@@ -18,6 +18,7 @@ from .serializer import (
 from django.core.mail import send_mail
 from .utils import generate_jwt_token, clean_data
 from django.utils.http import urlsafe_base64_decode
+from postMang.apps import get_firebase_storage_client
 # from django.core.exceptions import PermissionDenied, AuthenticationFailed
 from django.conf import settings
 # from auth.oauth import (
@@ -26,7 +27,7 @@ from django.conf import settings
 from auth.jwt import JWTAuthentication
 from django.contrib.auth import authenticate, login, logout
 from .tasks import send_otp_email
-from firebase_admin import storage
+# from firebase_admin import storage
 from datetime import timedelta
 import os
 from uuid import uuid4
@@ -469,7 +470,7 @@ class GetSignedUploadUrlView(APIView):
         try:
             # Get the default bucket associated with the initialized Firebase App
             # This relies on 'storageBucket' being set during initialize_app in apps.py
-            bucket = storage.bucket() 
+            bucket = get_firebase_storage_client() 
             blob = bucket.blob(destination_path)
 
             # Generate the signed URL for PUT operation
@@ -628,7 +629,7 @@ class GetSignedPostMediaUploadUrlView(APIView):
         destination_path = f"post_media/{user_id}/{unique_filename}"
 
         try:
-            bucket = storage.bucket()
+            bucket = get_firebase_storage_client()
             blob = bucket.blob(destination_path)
             upload_url = blob.generate_signed_url(
                 version='v4',
