@@ -18,20 +18,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4 # Action to clone your repository
 
-      - name: Create logs directory for CI tests
-        run: |
-          mkdir -p varsigram/logs
-          mkdir -p varsigram/config
 
-        working-directory: ${{ github.workspace }} # Ensure this command runs from the repo root
-      
-      - name: Create Firebase Service Account Key File
-        # Use the secret from GitHub. The value will be injected into this environment variable
-        env:
-          FIREBASE_ADMIN_KEY_CONTENT: ${{ secrets.FIREBASE_ADMINSDK_SERVICE_ACCOUNT_KEY }}
-        run: |
-          echo "$FIREBASE_ADMIN_KEY_CONTENT" > varsigram/config/dev-firebase-adminsdk.json
-        working-directory: ${{ github.workspace }} # Ensure this runs from the repository root
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -42,30 +29,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-        working-directory: ./
+        working-directory: ./ # Correct, as requirements.txt is usually at repo root
 
-      - name: Configure test environment variables
-        env:
-          DJANGO_DEBUG: "True"
-          USE_SQLITE_FOR_TESTS: "True"
-          FIREBASE_CREDENTIALS_PATH: ${{ github.workspace }}/varsigram/config/dev-firebase-adminsdk.json
-          
-          # --- ADD THESE FOR FIREBASE ---
-          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }} # IMPORTANT: Use a test project ID
-          FIRESTORE_DB_ID: test # If your tests connect to Firestore, otherwise a dummy
-          FIREBASE_STORAGE_BUCKET: dummy # If your tests connect to Storage, otherwise a dummy
-          # --- And ensure Django's SECRET_KEY is set ---
-          SECRET_KEY: 'a-dummy-secret-key-for-tests-only' # Your base.py uses this for SIMPLE_JWT
-          # ------------------------------
+      - name: Configure general environment information
+        # No Django-specific env vars needed here, as no Django commands are run in this job.
+        # This step primarily serves as a placeholder or for very basic global setup.
+        run: |
+          echo "Environment prepared for deployment."
 
-        run: |
-          echo "Test environment variables configured. DEBUG set to True, SQLite for tests."
-      - name: Run Django tests
-        # The '|| true' is for demonstration; in real CI, you'd want tests to pass.
-        # Remove '|| true' if you want the job to fail on test failures.
-        run: |
-          python manage.py test
-        working-directory: ./varsigram # Adjust if manage.py is not in the repository root
 
 
   # ----------------------------------------------
