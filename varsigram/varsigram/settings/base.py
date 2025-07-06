@@ -50,9 +50,9 @@ SECURE_BROWSER_XSS_FILTER = True # Enable XSS Filter in browsers
 X_FRAME_OPTIONS = 'DENY' # Prevent Clickjacking
 
 # Google OAuth Config (ensure these are handled securely, probably in production.py via env vars)
-GOOGLE_OAUTH2_CLIENT_ID = os.environ.get('GOOGLE_OAUTH2_CLIENT_ID')
-GOOGLE_OAUTH2_CLIENT_SECRET = os.environ.get('GOOGLE_OAUTH2_CLIENT_SECRET')
-GOOGLE_OAUTH2_PROJECT_ID = os.environ.get('GOOGLE_OAUTH2_PROJECT_ID')
+# GOOGLE_OAUTH2_CLIENT_ID = os.environ.get('GOOGLE_OAUTH2_CLIENT_ID')
+# GOOGLE_OAUTH2_CLIENT_SECRET = os.environ.get('GOOGLE_OAUTH2_CLIENT_SECRET')
+# GOOGLE_OAUTH2_PROJECT_ID = os.environ.get('GOOGLE_OAUTH2_PROJECT_ID')
 
 
 ROOT_URLCONF = 'varsigram.urls' # Keep your main project name
