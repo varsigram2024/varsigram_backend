@@ -43,6 +43,7 @@ EMAIL_USE_SSL = False # If TLS is true, SSL is typically false. They are often m
 # CORS for production: Only allow from your actual frontend domain
 CORS_ALLOWED_ORIGINS = os.environ.get('FRONTEND_URL', '').split(',') # Ensures it uses the actual env var
 
+ENVIRONMENT = 'staging'
 # Firebase settings for production (if used)
 # FIREBASE_PROJECT_ID = os.environ.get('FIREBASE_PROD_PROJECT_ID')
 # FIREBASE_STORAGE_BUCKET = os.environ.get('FIREBASE_PROD_STORAGE_BUCKET')
