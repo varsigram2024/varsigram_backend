@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from firebase_admin import firestore
-from postMang.apps import db  # Import the Firestore client from the app config
+from postMang.apps import get_firestore_db  # Import the Firestore client from the app config
 from .models import (User, Follow, Student, Organization)
 from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, GenericFollowSerializer
 from .utils import get_exclusive_org_user_ids, get_student_user_ids
@@ -11,8 +11,11 @@ import logging
 from datetime import datetime, timezone, timedelta
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
-from auth.jwt import JWTAuthentication
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
+
+# Initialize Firestore client
+db = get_firestore_db()  # Get the Firestore client from the app config
 
 class IsVerified(permissions.BasePermission):
     """
@@ -279,8 +282,8 @@ class PostListCreateFirestoreView(APIView):
     def post(self, request):
         if not request.user.is_authenticated:
             return Response({"error": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
-        if not getattr(request.user, 'is_verified', False):
-            return Response({"error": "You must be a verified user to create posts."}, status=status.HTTP_403_FORBIDDEN)
+        # if not getattr(request.user, 'is_verified', False):
+        #     return Response({"error": "You must be a verified user to create posts."}, status=status.HTTP_403_FORBIDDEN)
 
         serializer = FirestorePostCreateSerializer(data=request.data)
         if serializer.is_valid():

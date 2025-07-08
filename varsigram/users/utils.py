@@ -1,4 +1,4 @@
-from rest_framework_jwt.settings import api_settings
+# from rest_framework_jwt.settings import api_settings
 from django.http import QueryDict
 # ErrorHandlers
 
@@ -13,12 +13,12 @@ class ApplicationError(Exception):
 
 #Validators
 
-def generate_jwt_token(user):
-    """ Generate a JWT token for a user """
-    jwt_payload_handler = api_settings.JWT_PAYLOAD_HANDLER
-    jwt_encode_handler = api_settings.JWT_ENCODE_HANDLER
-    payload = jwt_payload_handler(user)
-    return jwt_encode_handler(payload)
+# def generate_jwt_token(user):
+#     """ Generate a JWT token for a user """
+#     jwt_payload_handler = api_settings.JWT_PAYLOAD_HANDLER
+#     jwt_encode_handler = api_settings.JWT_ENCODE_HANDLER
+#     payload = jwt_payload_handler(user)
+#     return jwt_encode_handler(payload)
 
 def clean_data(data):
     """ Processes nested student/organization data from a dictionary """

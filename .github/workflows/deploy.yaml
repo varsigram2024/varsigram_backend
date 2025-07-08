@@ -1,0 +1,176 @@
+name: Django CI/CD to Hostinger VPS
+
+on:
+  push:
+    branches:
+      - develop # Triggers CI and staging deploy on push to 'develop'
+      - main    # Triggers CI and production deploy on push to 'main'                                                          
+
+jobs:
+  # ----------------------------------------------
+  # 1. Build and Test Job (CI - Continuous Integration)
+  #    Runs on every push to 'develop' or 'main'
+  # ----------------------------------------------
+  build_and_test:
+    runs-on: ubuntu-latest # GitHub-hosted runner for CI tasks
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4 # Action to clone your repository
+
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10.12'
+          cache: 'pip' # Cache pip dependencies for faster builds
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+        working-directory: ./ # Correct, as requirements.txt is usually at repo root
+
+      - name: Configure general environment information
+        # No Django-specific env vars needed here, as no Django commands are run in this job.
+        # This step primarily serves as a placeholder or for very basic global setup.
+        run: |
+          echo "Environment prepared for deployment."
+
+
+
+  # ----------------------------------------------
+  # 2. Deploy to Staging Job (CD - Continuous Deployment)
+  #    Runs only if 'build_and_test' passes and push is to 'develop'
+  # ----------------------------------------------
+  deploy_staging:
+    needs: build_and_test # This job depends on 'build_and_test' succeeding
+    if: github.ref == 'refs/heads/develop' # Condition to run only on 'develop' branch push
+    runs-on: ubuntu-latest # GitHub-hosted runner
+
+    environment:
+      name: Staging
+      url: https://staging.varsigram.com # Your actual staging URL
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_STAGING }}
+
+      - name: Deploy to Staging VPS
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+              ${{ secrets.SSH_USER_STAGING }}@${{ secrets.SSH_HOST_STAGING }} << 'EOF'
+            set -e
+
+            echo "Navigating to project directory: ${{ secrets.PROJECT_PATH_STAGING }}"
+            cd ${{ secrets.PROJECT_PATH_STAGING }}
+
+            echo "Pulling latest code from Git (develop branch)..."
+            git pull origin develop
+
+            if [ ! -d "${{ secrets.VENV_PATH_STAGING }}" ]; then
+                echo "Creating virtual environment at ${{ secrets.VENV_PATH_STAGING }}"
+                python3 -m venv ${{ secrets.VENV_PATH_STAGING }}
+            fi
+
+            echo "Activating virtual environment..."
+            source ${{ secrets.VENV_PATH_STAGING }}/bin/activate
+
+            echo "Installing/updating Python dependencies..."
+            pip install -r requirements.txt
+
+            echo "Changing to Django project root (varsigram/)..."
+            cd varsigram
+
+            echo "Creating logs directory if it doesn't exist..."
+            mkdir -p logs
+
+            echo "Running Django database makemigrations..."
+            python manage.py makemigrations --noinput --settings=varsigram.settings.staging
+
+            echo "Running Django database migrations..."
+            python manage.py migrate --noinput --settings=varsigram.settings.staging
+
+            echo "Collecting static files..."
+            python manage.py collectstatic --noinput --settings=varsigram.settings.staging
+
+            echo "Restarting Gunicorn service: ${{ secrets.SERVICE_NAME_STAGING }}"
+            sudo systemctl restart ${{ secrets.SERVICE_NAME_STAGING }}
+
+            echo "Deployment to Staging complete!"
+          EOF
+        env:
+          DJANGO_SETTINGS_MODULE: varsigram.settings.staging
+
+  # ----------------------------------------------
+  # 3. Deploy to Production Job (CD - Continuous Deployment)
+  #    Runs only if 'build_and_test' passes and push is to 'main'
+  # ----------------------------------------------
+  deploy_production:
+    needs: build_and_test # This job depends on 'build_and_test' succeeding
+    if: github.ref == 'refs/heads/main' # Condition to run only on 'main' branch push
+    runs-on: ubuntu-latest # GitHub-hosted runner
+
+    environment:
+      name: Production
+      url: https://api.varsigram.com # Your actual production URL
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_PRODUCTION }}
+
+      - name: Deploy to Production VPS
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+              ${{ secrets.SSH_USER_PRODUCTION }}@${{ secrets.SSH_HOST_PRODUCTION }} << 'EOF'
+            set -e
+
+            echo "Navigating to project directory: ${{ secrets.PROJECT_PATH_PRODUCTION }}"
+            cd ${{ secrets.PROJECT_PATH_PRODUCTION }}
+
+            echo "Pulling latest code from Git (main branch)..."
+            git pull origin main
+
+            if [ ! -d "${{ secrets.VENV_PATH_PRODUCTION }}" ]; then
+                echo "Creating virtual environment at ${{ secrets.VENV_PATH_PRODUCTION }}"
+                python3 -m venv ${{ secrets.VENV_PATH_PRODUCTION }}
+            fi
+
+            echo "Activating virtual environment..."
+            source ${{ secrets.VENV_PATH_PRODUCTION }}/bin/activate
+
+            echo "Installing/updating Python dependencies..."
+            pip install -r requirements.txt
+
+            echo "Changing to Django project root (varsigram/)..."
+            cd varsigram
+
+            echo "Creating logs and config directory if it doesn't exist..."
+            mkdir -p logs
+
+            echo "Running Django database makemigrations..."
+            python manage.py makemigrations --noinput --settings=varsigram.settings.production
+
+            echo "Running Django database migrations..."
+            python manage.py migrate --noinput --settings=varsigram.settings.production
+
+            echo "Collecting static files..."
+            python manage.py collectstatic --noinput --settings=varsigram.settings.production
+
+            echo "Restarting Gunicorn service: ${{ secrets.SERVICE_NAME_PRODUCTION }}"
+            sudo systemctl restart ${{ secrets.SERVICE_NAME_PRODUCTION }}
+
+            echo "Deployment to Production complete!"
+          EOF
+        env:
+          DJANGO_SETTINGS_MODULE: varsigram.settings.production

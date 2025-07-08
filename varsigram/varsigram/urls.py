@@ -18,17 +18,26 @@ from django.urls import path, include
 from users import urls as users_urls
 from chat import urls as chat_urls
 from postMang import urls as post_urls
+from rest_framework_simplejwt.views import (
+    TokenObtainPairView,
+    TokenRefreshView,
+    TokenVerifyView, # Optional: only if you need an endpoint to verify token validity
+)
 # from users.views import (
     # GoogleLoginApi,
     # GoogleLoginRedirectApi,
 # )
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    path('api-auth/', include('rest_framework.urls')),
-    path('api/v1/', include(users_urls)),
-    path('api/v1/', include(chat_urls)),
-    path('api/v1/', include(post_urls)),
+    path('admin/', admin.site.urls, name='admin_urls'),
+    path('api-auth/', include('rest_framework.urls'), name='rest_framework_endpoints'),
+    path('api/v1/', include(users_urls), name='users_endpoint'),
+    path('api/v1/', include(chat_urls), name='chat_urls'),
+    path('api/v1/', include(post_urls), name='post_endpoints'),
+    # Uncomment if you want to use JWT authentication
+    path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/token/verify/', TokenVerifyView.as_view(), name='token_verify'),
     # path('callback/', GoogleLoginApi.as_view(), name='callback-sdk'),
     # path('redirect/', GoogleLoginRedirectApi.as_view(), name='redirect-sdk'),
 ]

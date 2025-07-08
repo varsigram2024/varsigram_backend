@@ -1,18 +1,21 @@
 from rest_framework import serializers
 from .models import User, Student, Organization
 from django.contrib.auth import authenticate
-from django.core.exceptions import ObjectDoesNotExist
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
+# from django.core.exceptions import ObjectDoesNotExist
 from django.contrib.auth.hashers import make_password
-from rest_framework_jwt.settings import api_settings
+# from rest_framework_jwt.settings import api_settings
 from django.core.mail import send_mail
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes
-from django.contrib.sites.shortcuts import get_current_site
-from .utils import generate_jwt_token
-from django.conf import settings
+# from django.contrib.sites.shortcuts import get_current_site
+# from .utils import generate_jwt_token
+# from django.conf import settings
+from rest_framework_simplejwt.tokens import RefreshToken
 import os
 from django.utils.timezone import now
 from .tasks import send_reset_email
+from django.utils.translation import gettext_lazy as _
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -134,15 +137,15 @@ class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     student = StudentRegisterSerializer(required=False, allow_null=True)
     organization = OrganizationRegisterSerializer(required=False, allow_null=True)
-    token = serializers.SerializerMethodField()
+    # Change 'token' to 'tokens' as we return both access and refresh
+    tokens = serializers.SerializerMethodField() # Changed from 'token' to 'tokens'
 
     class Meta:
         model = User
-        fields = ['email', 'password', 'bio', 'token', 'student', 'organization']
-    
+        fields = ['email', 'password', 'bio', 'tokens', 'student', 'organization'] # Changed 'token' to 'tokens'
+
     def validate(self, data):
-        """ Custom validation to ensure that only one of `student` or `organization` is provided. """
-        # print("i was called")
+        # ... (your existing validation logic remains unchanged) ...
         if data.get('student') and data.get('organization'):
             raise serializers.ValidationError("You cannot register as both a student and an organization.")
         if not data.get('student') and not data.get('organization'):
@@ -151,34 +154,35 @@ class RegisterSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """Create a User and associated Student or Organization."""
-        # print("Was I here???")
         student_data = validated_data.pop('student', None)
         organization_data = validated_data.pop('organization', None)
         password = validated_data.pop('password')
 
-        # print(f"Validated data: {validated_data} === Student data: {student_data}")
-
-        # Create the user
         user = User.objects.create(
             **validated_data,
             password=make_password(password)
         )
 
-        # Create related models
         if student_data:
             student = Student.objects.create(user=user, **student_data)
-            user.student = student  # Assign the student instance
-        
+            user.student = student
+
         if organization_data:
             organization = Organization.objects.create(user=user, **organization_data)
-            user.organization = organization  # Assign the organization instance
+            user.organization = organization
 
         user.save()
         return user
-    
-    def get_token(self, obj):
-        """Generate and return JWT token for the user using rest_framework_jwt."""
-        return generate_jwt_token(obj)
+
+
+    # Returns both access and refresh tokens
+    def get_tokens(self, user): # Changed method name to get_tokens
+        refresh = RefreshToken.for_user(user)
+        return {
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+        }
+
 
     
 
@@ -186,24 +190,25 @@ class LoginSerializer(serializers.Serializer):
     """Serializer for user login."""
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
-    token = serializers.SerializerMethodField()
+    tokens = serializers.SerializerMethodField() # Changed from 'token' to 'tokens'
 
     def validate(self, data):
         """Validate user credentials."""
         user = authenticate(email=data['email'], password=data['password'])
         if not user or user.is_deleted:
             raise serializers.ValidationError("Invalid credentials or inactive account.")
-        data['user'] = user
+        data['user'] = user # Store user in validated_data for get_tokens
         return data
-    
-    def get_token(self, obj):
-        """Generate and return JWT token for the user using rest_framework_jwt."""
-        jwt_payload_handler = api_settings.JWT_PAYLOAD_HANDLER
-        jwt_encode_handler = api_settings.JWT_ENCODE_HANDLER
 
-        payload = jwt_payload_handler(obj['user'])
-        token = jwt_encode_handler(payload)
-        return token
+    # Returns both access and refresh tokens
+    def get_tokens(self, obj): # Changed method name to get_tokens
+        # obj here is the validated_data from the serializer, which contains 'user'
+        user = obj['user']
+        refresh = RefreshToken.for_user(user)
+        return {
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+        }
 
 class PasswordResetSerializer(serializers.Serializer):
     email = serializers.EmailField()
@@ -213,38 +218,76 @@ class PasswordResetSerializer(serializers.Serializer):
         if not User.objects.filter(email=value).exists():
             raise serializers.ValidationError("User does not exist")
         return value
-    
-    def save(self, request):
-        """ Generates a reset link and sends an email """
+
+    def save(self, request): # Keep request argument, it's good practice for context
+        """ Generates a reset link and sends an email using Django's token """
         email = self.validated_data['email']
         user = User.objects.get(email=email)
-        token = generate_jwt_token(user)
+
+
+        # Generate token using Django's PasswordResetTokenGenerator
+        token_generator = PasswordResetTokenGenerator()
+        token = token_generator.make_token(user)
+
+
         uid = urlsafe_base64_encode(force_bytes(user.id))
-        frontend_url = f"{os.environ.get('DOMAIN')}/reset-password"  # <-- set this to your actual frontend URL
+        # Ensure DOMAIN is set in your environment variables for production/staging
+        frontend_url = f"{os.getenv('FRONTEND_DOMAIN')}/reset-password" # Use os.getenv and a more descriptive env var name
 
         reset_link = f"{frontend_url}?uid={uid}&token={token}"
-        send_reset_email.delay(email, reset_link)
+        # Assuming send_reset_email is a Celery task or similar
+        # Ensure your email template mentions that this link is time-sensitive.
+        # You might pass the request for site name in email context
+        send_reset_email.delay(email, reset_link) # Pass token and uid as well if your email needs them separately
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
     new_password = serializers.CharField(write_only=True, min_length=8)
     confirm_password = serializers.CharField(write_only=True)
+    # Add uid and token as fields that the serializer expects from the client
+    uid = serializers.CharField(required=True)
+    token = serializers.CharField(required=True)
+
 
     def validate(self, data):
-        """ Validates the token and match the passwords. """
-        
-        user = self.context['user']
-        self.user = user
+        """ Validates the token, UID, and password match. """
+        new_password = data['new_password']
+        confirm_password = data['confirm_password']
+        uidb64 = data['uid']
+        token = data['token']
 
-        # Check if the passwords match
-        if data['new_password'] != data['confirm_password']:
-            raise serializers.ValidationError("Passwords do not match")
+        if new_password != confirm_password:
+            raise serializers.ValidationError({"new_password": "Passwords do not match"})
+
+        try:
+            # Decode UID and get user
+            user_id = urlsafe_base64_decode(uidb64).decode()
+            user = User.objects.get(pk=user_id)
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+            raise serializers.ValidationError({'uid': _('Invalid User ID or reset link.')})
+
+        # Validate the token using Django's PasswordResetTokenGenerator
+        token_generator = PasswordResetTokenGenerator()
+        if not token_generator.check_token(user, token):
+            raise serializers.ValidationError({'token': _('Invalid or expired token.')})
+
+        # Optional: Add Django's password validation rules (if configured in AUTH_PASSWORD_VALIDATORS)
+        # from django.contrib.auth.password_validation import validate_password
+        # try:
+        #     validate_password(new_password, user=user)
+        # except Exception as e:
+        #     raise serializers.ValidationError({'new_password': list(e.messages)})
+
+
+        self.user = user # Store user for use in save method
         return data
-    
+
     def save(self):
         """ Update the user's password """
-        self.user.password = make_password(self.validated_data['new_password'])
+        # self.user is set in the validate method
+        self.user.set_password(self.validated_data['new_password']) # Use set_password to hash
         self.user.save()
+        return self.user # Return the user instance
 
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True)
