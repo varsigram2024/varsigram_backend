@@ -145,8 +145,7 @@ SIMPLE_JWT = {
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 465
-EMAIL_USE_TLS = False # This should be True in production, but let's put it there
-EMAIL_USE_SSL = True # This too
+
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
