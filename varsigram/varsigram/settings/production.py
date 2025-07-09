@@ -39,8 +39,8 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD')
 # Ensure these are True in production for secure email
-EMAIL_USE_TLS = True
-EMAIL_USE_SSL = False # If TLS is true, SSL is typically false. They are often mutually exclusive.
+EMAIL_USE_TLS = False
+EMAIL_USE_SSL = True # If TLS is true, SSL is typically false. They are often mutually exclusive.
 
 # CORS for production: Only allow from your actual frontend domain
 CORS_ALLOWED_ORIGINS = os.environ.get('FRONTEND_URL', '').split(',') # Ensures it uses the actual env var
