@@ -30,10 +30,10 @@ from rest_framework_simplejwt.views import (
 
 urlpatterns = [
     path('admin/', admin.site.urls, name='admin_urls'),
-    path('api-auth/', include('rest_framework.urls'), name='rest_framework_endpoints'),
-    path('api/v1/', include(users_urls), name='users_endpoint'),
-    path('api/v1/', include(chat_urls), name='chat_urls'),
-    path('api/v1/', include(post_urls), name='post_endpoints'),
+    path('api-auth/', include('rest_framework.urls', namespace='rest_framework_endpoints')),
+    path('api/v1/', include(users_urls, namespace='users_api')),
+    path('api/v1/', include(chat_urls, namespace='chat_api')),
+    path('api/v1/', include(post_urls, namespace='posts_api')),
     # Uncomment if you want to use JWT authentication
     path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),

@@ -64,6 +64,7 @@ class RegisterView(generics.GenericAPIView):
                 'message': 'User registered successfully',
                 'access': tokens['access'],   # Return the access token
                 'refresh': tokens['refresh'], # Return the refresh token
+                'firebase_custom_token': tokens['firebase_custom_token'],
             }, status=status.HTTP_201_CREATED)
         # No need for else: return Response(serializer.errors...) because of raise_exception=True
 
@@ -87,6 +88,7 @@ class LoginView(generics.GenericAPIView):
                 'message': 'Login successful',
                 'access': tokens['access'],
                 'refresh': tokens['refresh'],
+                'firebase_custom_token': tokens['firebase_custom_token'],
             }, status=status.HTTP_200_OK)
         # No need for else: return Response(serializer.errors...)
 

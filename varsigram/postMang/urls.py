@@ -8,6 +8,8 @@ from .views import (
     VerifiedOrgBadge
 )
 
+app_name = 'postMang'
+
 urlpatterns = [
     path('posts/', PostListCreateFirestoreView.as_view(), name='post-list-create'),
     path('posts/<str:post_id>/', PostDetailFirestoreView.as_view(), name='post-detail'),
