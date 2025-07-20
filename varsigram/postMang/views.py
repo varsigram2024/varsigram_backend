@@ -140,72 +140,105 @@ logger = logging.getLogger(__name__)
 
 class FeedView(APIView):
     """
-    Feed: All posts by students, ordered by trending_score.
+    Feed: All posts by students, ordered by trending_score (DESC), then timestamp (DESC).
+    Supports cursor-based pagination.
     """
     permission_classes = [permissions.IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
     def get(self, request):
-        posts_limit = 30
-        all_feed_posts = []
-
-        # Get all user IDs that have a Student profile
-        student_user_ids_str = get_student_user_ids()  # This returns a list of user IDs as strings
-        if not student_user_ids_str:
-            logger.info("No student users found for feed.")
-            return Response([], status=status.HTTP_200_OK)
-
         try:
-            student_user_ids_for_query = student_user_ids_str[:10]  # Firestore 'in' query limit
+            page_size = int(request.query_params.get('page_size', 30))
+            start_after_score = request.query_params.get('start_after_score')
+            start_after_timestamp = request.query_params.get('start_after_timestamp')
+
+            all_feed_posts = []
+
+            student_user_ids_str = get_student_user_ids()
+            if not student_user_ids_str:
+                logger.info("No student users found for feed.")
+                return Response([], status=status.HTTP_200_OK)
+
+            student_user_ids_for_query = student_user_ids_str[:10]
+
             posts_query = db.collection('posts') \
                 .where('author_id', 'in', student_user_ids_for_query) \
                 .order_by('trending_score', direction=firestore.Query.DESCENDING) \
-                    .order_by('timestamp', direction=firestore.Query.DESCENDING) \
-                    .limit(posts_limit)
+                .order_by('timestamp', direction=firestore.Query.DESCENDING)
 
-            current_user_id = str(request.user.id)  if request.user.is_authenticated else None
+            # Apply cursor for pagination
+            if start_after_score and start_after_timestamp:
+                try:
+                    # Convert timestamp from string to Firestore timestamp
+                    from google.cloud.firestore_v1 import DocumentSnapshot
+                    import datetime
+
+                    ts = datetime.datetime.fromisoformat(start_after_timestamp)
+                    posts_query = posts_query.start_after({
+                        'trending_score': float(start_after_score),
+                        'timestamp': ts
+                    })
+                except Exception as e:
+                    logger.warning(f"Invalid cursor: {e}")
+
+            posts_query = posts_query.limit(page_size)
+
+            current_user_id = str(request.user.id)
 
             for doc in posts_query.stream():
                 post_data = doc.to_dict()
                 post_data['id'] = doc.id
-                post_data['has_liked'] = False  # Default to False, will be updated later
+                post_data['has_liked'] = False
                 if current_user_id:
                     like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
                     post_data['has_liked'] = like_doc_ref.get().exists
                 all_feed_posts.append(post_data)
-        
-        
+
+            # Hydrate author data
             authors_map = {}
             for user_id in student_user_ids_str:
-                author_name = None
-                display_name_slug = None
                 try:
                     author = User.objects.get(id=user_id)
+                    author_name = display_name_slug = None
+                    exclusive = False
                     if hasattr(author, 'student'):
                         author_name = author.student.name
                         display_name_slug = getattr(author.student, 'display_name_slug', None)
                     elif hasattr(author, 'organization'):
                         author_name = author.organization.organization_name
                         display_name_slug = getattr(author.organization, 'display_name_slug', None)
-                    
+                        exclusive = getattr(author.organization, 'exclusive', False)
                     authors_map[str(author.id)] = {
-                    "id": author.id,
-                    "email": author.email,
-                    "profile_pic_url": author.profile_pic_url,
-                    "name": author_name,
-                    "display_name_slug": display_name_slug,
-                    "is_verified": author.is_verified
-                }
+                        "id": author.id,
+                        "email": author.email,
+                        "profile_pic_url": author.profile_pic_url,
+                        "name": author_name,
+                        "display_name_slug": display_name_slug,
+                        "is_verified": author.is_verified,
+                        "exclusive": exclusive
+                    }
                 except User.DoesNotExist:
                     continue
-                
+
+            # Next cursor
+            next_cursor = None
+            if len(all_feed_posts) == page_size:
+                last = all_feed_posts[-1]
+                next_cursor = {
+                    "trending_score": last.get('trending_score'),
+                    "timestamp": last.get('timestamp').isoformat() if last.get('timestamp') else None
+                }
 
             serializer = FirestorePostOutputSerializer(all_feed_posts, many=True, context={'authors_map': authors_map})
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        
+            return Response({
+                "results": serializer.data,
+                "next_cursor": next_cursor
+            }, status=status.HTTP_200_OK)
+
         except Exception as e:
             logger.error(f"Error fetching feed posts: {str(e)}")
             return Response({"error": f"Failed to retrieve feed posts: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 # Custom Permission Example (simplified)
 class IsFirestoreDocOwner(permissions.BasePermission):
@@ -230,54 +263,74 @@ class PostListCreateFirestoreView(APIView):
 
     def get(self, request):
         try:
+            # --- Pagination setup ---
+            page_size = int(request.query_params.get("page_size", 10))
+            start_after_id = request.query_params.get("start_after", None)
+
             posts_ref = db.collection('posts').order_by('timestamp', direction=firestore.Query.DESCENDING)
-            docs = posts_ref.stream()
+
+            if start_after_id:
+                start_doc = db.collection('posts').document(start_after_id).get()
+                if start_doc.exists:
+                    posts_ref = posts_ref.start_after(start_doc)
+                else:
+                    return Response({"error": "Invalid start_after ID"}, status=status.HTTP_400_BAD_REQUEST)
+
+            docs = posts_ref.limit(page_size).stream()
+            
             posts_list = []
             author_ids = set()
+            last_doc_id = None
 
             for doc in docs:
                 post_data = doc.to_dict()
                 post_data['id'] = doc.id
                 posts_list.append(post_data)
+                last_doc_id = doc.id  # Will end up being the last doc in the loop
                 if 'author_id' in post_data:
                     author_ids.add(str(post_data['author_id']))
 
-            # Hydrate authors_map with display_name_slug
-            authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
+            # --- Hydrate authors ---
             authors_map = {}
-            for author in authors_from_postgres:
-                author_name = None
-                display_name_slug = None
-                if hasattr(author, 'student'):
-                    author_name = author.student.name
-                    display_name_slug = getattr(author.student, 'display_name_slug', None)
-                elif hasattr(author, 'organization'):
-                    author_name = author.organization.organization_name
-                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
+            if author_ids:
+                authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
+                for author in authors_from_postgres:
+                    author_name = None
+                    display_name_slug = None
+                    if hasattr(author, 'student'):
+                        author_name = author.student.name
+                        display_name_slug = getattr(author.student, 'display_name_slug', None)
+                    elif hasattr(author, 'organization'):
+                        author_name = author.organization.organization_name
+                        display_name_slug = getattr(author.organization, 'display_name_slug', None)
+                        exclusive = getattr(author.organization, 'exclusive', False)
 
-                authors_map[str(author.id)] = {
-                    "id": author.id,
-                    "email": author.email,
-                    "profile_pic_url": author.profile_pic_url,
-                    "name": author_name,
-                    "display_name_slug": display_name_slug,
-                    "is_verified": author.is_verified
-                }
+                    authors_map[str(author.id)] = {
+                        "id": author.id,
+                        "email": author.email,
+                        "profile_pic_url": author.profile_pic_url,
+                        "name": author_name,
+                        "display_name_slug": display_name_slug,
+                        "is_verified": author.is_verified,
+                        "exclusive": exclusive
+                    }
 
-            # Add has_liked logic if needed (as you already have)
+            # --- Has liked logic ---
             if request.user.is_authenticated and posts_list:
                 user_id = str(request.user.id)
                 for post in posts_list:
                     like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
                     post['has_liked'] = like_doc_ref.get().exists
-            
-            # print("Author IDs in posts:", [post.get('author_id') for post in posts_list])
-            # print("Authors map keys:", list(authors_map.keys()))
-            # Pass authors_map to serializer context
+
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
-            return Response(serializer.data, status=status.HTTP_200_OK)
+            return Response({
+                "results": serializer.data,
+                "next_cursor": last_doc_id if len(posts_list) == page_size else None
+            }, status=status.HTTP_200_OK)
+
         except Exception as e:
             return Response({"error": f"Failed to retrieve posts: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
     def post(self, request):
         if not request.user.is_authenticated:
@@ -355,6 +408,7 @@ class PostDetailFirestoreView(APIView):
                         author_name = author.student.name
                     elif hasattr(author, 'organization') and author.organization.organization_name:
                         author_name = author.organization.organization_name
+                        exclusive = getattr(author.organization, 'exclusive', False)
 
                     author_info = {
                         "id": author.id,
@@ -362,6 +416,7 @@ class PostDetailFirestoreView(APIView):
                         "profile_pic_url": author.profile_pic_url,
                         "name": author_name,
                         "is_verified": author.is_verified if hasattr(author, 'is_verified') else False,
+                        "exclusive": exclusive if hasattr(author, 'organization') else False
                     }
                 except User.DoesNotExist:
                     author_info = {
@@ -529,41 +584,70 @@ class CommentListFirestoreView(APIView):
             return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
 
         try:
+            # --- Pagination params ---
+            page_size = int(request.query_params.get("page_size", 10))
+            start_after_id = request.query_params.get("start_after")
+
             comments_ref = post_ref.collection('comments').order_by('timestamp', direction=firestore.Query.ASCENDING)
-            docs = comments_ref.stream()
+
+            if start_after_id:
+                start_after_doc = post_ref.collection('comments').document(start_after_id).get()
+                if start_after_doc.exists:
+                    comments_ref = comments_ref.start_after(start_after_doc)
+                else:
+                    return Response({"error": "Invalid start_after ID"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Apply limit
+            docs = comments_ref.limit(page_size).stream()
+
             comments_list = []
             author_ids = set()
+            last_doc_id = None
+
             for doc in docs:
                 comment_data = doc.to_dict()
                 comment_data['id'] = doc.id
                 comments_list.append(comment_data)
+                last_doc_id = doc.id
+
                 if 'author_id' in comment_data:
                     author_ids.add(str(comment_data['author_id']))
 
-            # Hydrate authors_map
-            authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
+            # Hydrate authors
             authors_map = {}
-            for author in authors_from_postgres:
-                author_name = None
-                display_name_slug = None
-                if hasattr(author, 'student'):
-                    author_name = author.student.name
-                    display_name_slug = getattr(author.student, 'display_name_slug', None)
-                elif hasattr(author, 'organization'):
-                    author_name = author.organization.organization_name
-                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
-                authors_map[str(author.id)] = {
-                    "id": author.id,
-                    "name": author_name,
-                    "display_name_slug": display_name_slug,
-                    "profile_pic_url": author.profile_pic_url,
-                    "is_verified": author.is_verified if hasattr(author, 'is_verified') else False,
-                }
+            if author_ids:
+                authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
+                for author in authors_from_postgres:
+                    author_name = None
+                    display_name_slug = None
+                    exclusive = False
+                    if hasattr(author, 'student'):
+                        author_name = author.student.name
+                        display_name_slug = getattr(author.student, 'display_name_slug', None)
+                    elif hasattr(author, 'organization'):
+                        author_name = author.organization.organization_name
+                        display_name_slug = getattr(author.organization, 'display_name_slug', None)
+                        exclusive = getattr(author.organization, 'exclusive', False)
+
+                    authors_map[str(author.id)] = {
+                        "id": author.id,
+                        "name": author_name,
+                        "display_name_slug": display_name_slug,
+                        "profile_pic_url": author.profile_pic_url,
+                        "is_verified": author.is_verified,
+                        "exclusive": exclusive
+                    }
 
             serializer = FirestoreCommentSerializer(comments_list, many=True, context={'authors_map': authors_map})
-            return Response(serializer.data, status=status.HTTP_200_OK)
+
+            return Response({
+                "results": serializer.data,
+                "next_cursor": last_doc_id if len(comments_list) == page_size else None
+            }, status=status.HTTP_200_OK)
+
         except Exception as e:
             return Response({"error": f"Failed to retrieve comments: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
 ##
@@ -816,48 +900,64 @@ class LikeListFirestoreView(APIView):
 class ExclusiveOrgsRecentPostsView(APIView):
     """
     List recent posts from organizations with exclusive=True.
-    Only posts authored by exclusive organizations are included.
+    Supports cursor-based pagination.
     """
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     authentication_classes = [JWTAuthentication]
 
     def get(self, request):
-        posts_limit = 20
-
-        # 1. Get all exclusive organizations' user IDs
-        exclusive_org_user_ids_str = get_exclusive_org_user_ids()
-
-        if not exclusive_org_user_ids_str:
-            return Response([], status=200)
-
-        # 2. Query Firestore for posts from exclusive orgs
-        posts = []
         try:
-            # Firestore 'in' queries are limited to 10 items
-            org_user_ids_for_query = exclusive_org_user_ids_str[:10]
-            query = db.collection('posts') \
-                .where('author_id', 'in', org_user_ids_for_query) \
-                .order_by('timestamp', direction=firestore.Query.DESCENDING) \
-                .limit(posts_limit)
-            
+            # --- Pagination parameters ---
+            page_size = int(request.query_params.get("page_size", 20))
+            start_after = request.query_params.get("start_after")  # Firestore doc ID
+
+            # 1. Get all exclusive org user IDs
+            exclusive_org_user_ids_str = get_exclusive_org_user_ids()
+            if not exclusive_org_user_ids_str:
+                return Response({"results": [], "next_cursor": None}, status=200)
+
             current_user_id = str(request.user.id) if request.user.is_authenticated else None
-    
-            for doc in query.stream():
-                post_data = doc.to_dict()
-                post_data['id'] = doc.id
-                post_data['has_liked'] = False
-                if current_user_id:
-                    like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
-                    post_data['has_liked'] = like_doc_ref.get().exists
-                # post_data['is_shared'] = False  # Mark as original post
-                posts.append(post_data)
-            
-            # Hydrate author info for exclusive orgs
+
+            # 2. Break user IDs into chunks of 10 for Firestore "in" queries
+            def chunk(lst, size):
+                for i in range(0, len(lst), size):
+                    yield lst[i:i + size]
+
+            all_posts = []
+
+            for user_id_chunk in chunk(exclusive_org_user_ids_str, 10):
+                query_ref = db.collection("posts") \
+                    .where("author_id", "in", user_id_chunk) \
+                    .order_by("timestamp", direction=firestore.Query.DESCENDING)
+
+                if start_after:
+                    # Get the cursor doc if provided
+                    cursor_doc = db.collection("posts").document(start_after).get()
+                    if cursor_doc.exists:
+                        query_ref = query_ref.start_after(cursor_doc)
+
+                # Add a high upper limit to combine and slice later
+                for doc in query_ref.limit(50).stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    post_data['has_liked'] = False
+                    if current_user_id:
+                        like_doc_ref = db.collection('posts').document(doc.id).collection('likes').document(current_user_id)
+                        post_data['has_liked'] = like_doc_ref.get().exists
+                    all_posts.append(post_data)
+
+            # 3. Sort and trim posts to match final pagination
+            all_posts_sorted = sorted(all_posts, key=lambda x: x['timestamp'], reverse=True)
+            paginated_posts = all_posts_sorted[:page_size]
+            next_cursor = paginated_posts[-1]['id'] if len(paginated_posts) == page_size else None
+
+            # 4. Hydrate authors map
             authors_map = {}
             for user_id in exclusive_org_user_ids_str:
                 try:
                     author = User.objects.only('id', 'email', 'profile_pic_url', 'is_verified').get(id=user_id)
                     author_name = author.organization.organization_name
+                    exclusive = getattr(author.organization, 'exclusive', False)
 
                     authors_map[str(author.id)] = {
                         "id": author.id,
@@ -865,16 +965,22 @@ class ExclusiveOrgsRecentPostsView(APIView):
                         "profile_pic_url": author.profile_pic_url,
                         "name": author_name,
                         "is_verified": author.is_verified,
+                        "exclusive": exclusive
                     }
                 except User.DoesNotExist:
-                    pass
-            
-            serializer = FirestorePostOutputSerializer(posts, many=True, context={'authors_map': authors_map})
-            return Response(serializer.data, status=status.HTTP_200_OK)
-    
+                    continue
+
+            serializer = FirestorePostOutputSerializer(paginated_posts, many=True, context={'authors_map': authors_map})
+
+            return Response({
+                "results": serializer.data,
+                "next_cursor": next_cursor
+            }, status=status.HTTP_200_OK)
+
         except Exception as e:
             logger.error(f"Error fetching exclusive org posts: {e}", exc_info=True)
             return Response({"detail": "Error fetching posts."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
 class UserPostsFirestoreView(APIView):
@@ -886,63 +992,87 @@ class UserPostsFirestoreView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def get(self, request, user_id):
-        target_user_id = user_id
-
         try:
-            posts_ref = db.collection('posts')
-            posts_query = posts_ref.where('author_id', '==', target_user_id).order_by('timestamp', direction=firestore.Query.DESCENDING).stream()
-            
+            page_size = int(request.query_params.get("page_size", 20))
+            start_after = request.query_params.get("start_after")  # Expecting a Firestore post ID
+
             posts_list = []
+            shares_map = {}
             current_user_id = str(request.user.id) if request.user.is_authenticated else None
 
-            for doc in posts_query:
+            # --- Authored Posts ---
+            posts_query = db.collection('posts') \
+                .where('author_id', '==', user_id) \
+                .order_by('timestamp', direction=firestore.Query.DESCENDING)
+
+            if start_after:
+                try:
+                    start_doc = db.collection('posts').document(start_after).get()
+                    if start_doc.exists:
+                        posts_query = posts_query.start_after(start_doc)
+                except:
+                    pass
+
+            authored_posts = []
+            for doc in posts_query.limit(50).stream():
                 post_data = doc.to_dict()
                 post_data['id'] = doc.id
                 post_data['has_liked'] = False
+                post_data['is_shared'] = False
                 if current_user_id:
-                    like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
+                    like_doc_ref = db.collection('posts').document(doc.id).collection('likes').document(current_user_id)
                     post_data['has_liked'] = like_doc_ref.get().exists
-                post_data['is_shared'] = False  # Mark as original post
-                posts_list.append(post_data)
+                authored_posts.append(post_data)
 
-            # --- Add shares made by this user ---
-            shares_query = db.collection('shares').where('shared_by_id', '==', target_user_id).order_by('shared_at', direction=firestore.Query.DESCENDING).stream()
-            shares_map = {}
-            for share_doc in shares_query:
+            # --- Shared Posts ---
+            shares_query = db.collection('shares') \
+                .where('shared_by_id', '==', user_id) \
+                .order_by('shared_at', direction=firestore.Query.DESCENDING)
+
+            shared_posts = []
+            for share_doc in shares_query.limit(50).stream():
                 share_data = share_doc.to_dict()
                 original_post_id = share_data.get('original_post_id')
-                if original_post_id:
-                    # Add this share to the shares_map for the original post
-                    if original_post_id not in shares_map:
-                        shares_map[original_post_id] = []
-                    # Optionally, serialize with FirestoreShareOutputSerializer
-                    share_data['id'] = share_doc.id
-                    shares_map[original_post_id].append(share_data)
+                if not original_post_id:
+                    continue
 
-                    # Also add the shared post to the posts_list if you want to show it in the user's activity
-                    original_post_ref = db.collection('posts').document(original_post_id)
-                    original_post_doc = original_post_ref.get()
-                    if original_post_doc.exists:
-                        post_data = original_post_doc.to_dict()
-                        post_data['id'] = original_post_doc.id
-                        post_data['is_shared'] = True
-                        post_data['shared_by_id'] = share_data.get('shared_by_id')
-                        post_data['shared_at'] = share_data.get('shared_at')
-                        post_data['has_liked'] = False
-                        if current_user_id:
-                            like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
-                            post_data['has_liked'] = like_doc_ref.get().exists
-                        posts_list.append(post_data)
+                # Add share to shares_map
+                share_data['id'] = share_doc.id
+                if original_post_id not in shares_map:
+                    shares_map[original_post_id] = []
+                shares_map[original_post_id].append(share_data)
 
-            # Hydrate author info for the target user
+                # Add shared post to output
+                original_post_doc = db.collection('posts').document(original_post_id).get()
+                if original_post_doc.exists:
+                    post_data = original_post_doc.to_dict()
+                    post_data['id'] = original_post_doc.id
+                    post_data['is_shared'] = True
+                    post_data['shared_by_id'] = share_data.get('shared_by_id')
+                    post_data['shared_at'] = share_data.get('shared_at')
+                    post_data['has_liked'] = False
+                    if current_user_id:
+                        like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
+                        post_data['has_liked'] = like_doc_ref.get().exists
+                    shared_posts.append(post_data)
+
+            # --- Combine, sort, and paginate ---
+            combined_posts = authored_posts + shared_posts
+            combined_posts.sort(key=lambda x: x.get('shared_at') or x.get('timestamp'), reverse=True)
+
+            paginated_posts = combined_posts[:page_size]
+            next_cursor = paginated_posts[-1]['id'] if len(paginated_posts) == page_size else None
+
+            # --- Hydrate author info ---
             authors_map = {}
             try:
-                author = User.objects.only('id', 'email', 'profile_pic_url', 'is_verified').get(id=target_user_id)
+                author = User.objects.only('id', 'email', 'profile_pic_url', 'is_verified').get(id=user_id)
                 author_name = None
                 if hasattr(author, 'student') and author.student.name:
                     author_name = author.student.name
                 elif hasattr(author, 'organization') and author.organization.organization_name:
                     author_name = author.organization.organization_name
+                    exclusive = getattr(author.organization, 'exclusive', False)
 
                 authors_map[str(author.id)] = {
                     "id": author.id,
@@ -950,21 +1080,24 @@ class UserPostsFirestoreView(APIView):
                     "profile_pic_url": author.profile_pic_url,
                     "name": author_name,
                     "is_verified": author.is_verified,
+                    "exclusive": exclusive if hasattr(author, 'organization') else False
                 }
             except User.DoesNotExist:
                 pass
 
-            # Sort posts by timestamp or shared_at (most recent first)
-            posts_list.sort(key=lambda x: x.get('shared_at') or x.get('timestamp'), reverse=True)
-
             serializer = FirestorePostOutputSerializer(
-                posts_list, many=True, context={'authors_map': authors_map, 'shares_map': shares_map}
+                paginated_posts, many=True,
+                context={'authors_map': authors_map, 'shares_map': shares_map}
             )
-            return Response(serializer.data, status=status.HTTP_200_OK)
+
+            return Response({
+                "results": serializer.data,
+                "next_cursor": next_cursor
+            }, status=status.HTTP_200_OK)
 
         except Exception as e:
-            # print(f"Error retrieving user posts: {e}")
             return Response({"error": f"Failed to retrieve posts for user: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class WhoToFollowView(APIView):
     permission_classes = [permissions.IsAuthenticated]
