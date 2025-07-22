@@ -152,47 +152,62 @@ class FeedView(APIView):
             start_after_score = request.query_params.get('start_after_score')
             start_after_timestamp = request.query_params.get('start_after_timestamp')
 
-            all_feed_posts = []
-
             student_user_ids_str = get_student_user_ids()
             if not student_user_ids_str:
                 logger.info("No student users found for feed.")
-                return Response([], status=status.HTTP_200_OK)
-
-            student_user_ids_for_query = student_user_ids_str[:10]
-
-            posts_query = db.collection('posts') \
-                .where('author_id', 'in', student_user_ids_for_query) \
-                .order_by('trending_score', direction=firestore.Query.DESCENDING) \
-                .order_by('timestamp', direction=firestore.Query.DESCENDING)
-
-            # Apply cursor for pagination
-            if start_after_score and start_after_timestamp:
-                try:
-                    # Convert timestamp from string to Firestore timestamp
-                    from google.cloud.firestore_v1 import DocumentSnapshot
-                    import datetime
-
-                    ts = datetime.datetime.fromisoformat(start_after_timestamp)
-                    posts_query = posts_query.start_after({
-                        'trending_score': float(start_after_score),
-                        'timestamp': ts
-                    })
-                except Exception as e:
-                    logger.warning(f"Invalid cursor: {e}")
-
-            posts_query = posts_query.limit(page_size)
+                return Response({"results": [], "next_cursor": None}, status=status.HTTP_200_OK)
 
             current_user_id = str(request.user.id)
+            all_feed_posts = []
 
-            for doc in posts_query.stream():
-                post_data = doc.to_dict()
-                post_data['id'] = doc.id
-                post_data['has_liked'] = False
-                if current_user_id:
-                    like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
-                    post_data['has_liked'] = like_doc_ref.get().exists
-                all_feed_posts.append(post_data)
+            # Chunk student IDs for Firestore "in" query (max 10 per query)
+            def chunk(lst, size):
+                for i in range(0, len(lst), size):
+                    yield lst[i:i + size]
+
+            for user_id_chunk in chunk(student_user_ids_str, 10):
+                posts_query = db.collection('posts') \
+                    .where('author_id', 'in', user_id_chunk) \
+                    .order_by('trending_score', direction=firestore.Query.DESCENDING) \
+                    .order_by('timestamp', direction=firestore.Query.DESCENDING)
+
+                # Cursor pagination only applies to the first chunk
+                if start_after_score and start_after_timestamp and user_id_chunk == student_user_ids_str[:10]:
+                    try:
+                        import datetime
+                        ts = datetime.datetime.fromisoformat(start_after_timestamp)
+                        posts_query = posts_query.start_after({
+                            'trending_score': float(start_after_score),
+                            'timestamp': ts
+                        })
+                    except Exception as e:
+                        logger.warning(f"Invalid cursor: {e}")
+
+                for doc in posts_query.limit(50).stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    post_data['has_liked'] = False
+                    if current_user_id:
+                        like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
+                        post_data['has_liked'] = like_doc_ref.get().exists
+                    all_feed_posts.append(post_data)
+
+            # Sort all posts by trending_score DESC, then timestamp DESC
+            all_feed_posts_sorted = sorted(
+                all_feed_posts,
+                key=lambda x: (-x.get('trending_score', 0), x.get('timestamp', datetime.min)),
+                reverse=False
+            )
+
+            # Paginate
+            paginated_posts = all_feed_posts_sorted[:page_size]
+            next_cursor = None
+            if len(paginated_posts) == page_size:
+                last = paginated_posts[-1]
+                next_cursor = {
+                    "trending_score": last.get('trending_score'),
+                    "timestamp": last.get('timestamp').isoformat() if last.get('timestamp') else None
+                }
 
             # Hydrate author data
             authors_map = {}
@@ -220,16 +235,7 @@ class FeedView(APIView):
                 except User.DoesNotExist:
                     continue
 
-            # Next cursor
-            next_cursor = None
-            if len(all_feed_posts) == page_size:
-                last = all_feed_posts[-1]
-                next_cursor = {
-                    "trending_score": last.get('trending_score'),
-                    "timestamp": last.get('timestamp').isoformat() if last.get('timestamp') else None
-                }
-
-            serializer = FirestorePostOutputSerializer(all_feed_posts, many=True, context={'authors_map': authors_map})
+            serializer = FirestorePostOutputSerializer(paginated_posts, many=True, context={'authors_map': authors_map})
             return Response({
                 "results": serializer.data,
                 "next_cursor": next_cursor
@@ -238,7 +244,6 @@ class FeedView(APIView):
         except Exception as e:
             logger.error(f"Error fetching feed posts: {str(e)}")
             return Response({"error": f"Failed to retrieve feed posts: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
 
 # Custom Permission Example (simplified)
 class IsFirestoreDocOwner(permissions.BasePermission):
