@@ -159,6 +159,7 @@ class FeedView(APIView):
 
             current_user_id = str(request.user.id)
             all_feed_posts = []
+            seen_post_ids = set()
 
             # Chunk student IDs for Firestore "in" query (max 10 per query)
             def chunk(lst, size):
@@ -174,8 +175,7 @@ class FeedView(APIView):
                 # Cursor pagination only applies to the first chunk
                 if start_after_score and start_after_timestamp and user_id_chunk == student_user_ids_str[:10]:
                     try:
-                        import datetime
-                        ts = datetime.datetime.fromisoformat(start_after_timestamp)
+                        ts = datetime.fromisoformat(start_after_timestamp)
                         posts_query = posts_query.start_after({
                             'trending_score': float(start_after_score),
                             'timestamp': ts
@@ -184,6 +184,8 @@ class FeedView(APIView):
                         logger.warning(f"Invalid cursor: {e}")
 
                 for doc in posts_query.limit(50).stream():
+                    if doc.id in seen_post_ids:
+                        continue
                     post_data = doc.to_dict()
                     post_data['id'] = doc.id
                     post_data['has_liked'] = False
@@ -191,6 +193,7 @@ class FeedView(APIView):
                         like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
                         post_data['has_liked'] = like_doc_ref.get().exists
                     all_feed_posts.append(post_data)
+                    seen_post_ids.add(doc.id)
 
             # Sort all posts by trending_score DESC, then timestamp DESC
             all_feed_posts_sorted = sorted(
@@ -209,31 +212,29 @@ class FeedView(APIView):
                     "timestamp": last.get('timestamp').isoformat() if last.get('timestamp') else None
                 }
 
-            # Hydrate author data
+            # Hydrate author data only for authors in paginated_posts
+            author_ids = set(str(post['author_id']) for post in paginated_posts if 'author_id' in post)
             authors_map = {}
-            for user_id in student_user_ids_str:
-                try:
-                    author = User.objects.get(id=user_id)
-                    author_name = display_name_slug = None
-                    exclusive = False
-                    if hasattr(author, 'student'):
-                        author_name = author.student.name
-                        display_name_slug = getattr(author.student, 'display_name_slug', None)
-                    elif hasattr(author, 'organization'):
-                        author_name = author.organization.organization_name
-                        display_name_slug = getattr(author.organization, 'display_name_slug', None)
-                        exclusive = getattr(author.organization, 'exclusive', False)
-                    authors_map[str(author.id)] = {
-                        "id": author.id,
-                        "email": author.email,
-                        "profile_pic_url": author.profile_pic_url,
-                        "name": author_name,
-                        "display_name_slug": display_name_slug,
-                        "is_verified": author.is_verified,
-                        "exclusive": exclusive if hasattr(author, 'organization') else False
-                    }
-                except User.DoesNotExist:
-                    continue
+            authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
+            for author in authors_from_postgres:
+                author_name = display_name_slug = None
+                exclusive = False
+                if hasattr(author, 'student'):
+                    author_name = author.student.name
+                    display_name_slug = getattr(author.student, 'display_name_slug', None)
+                elif hasattr(author, 'organization'):
+                    author_name = author.organization.organization_name
+                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
+                    exclusive = getattr(author.organization, 'exclusive', False)
+                authors_map[str(author.id)] = {
+                    "id": author.id,
+                    "email": author.email,
+                    "profile_pic_url": author.profile_pic_url,
+                    "name": author_name,
+                    "display_name_slug": display_name_slug,
+                    "is_verified": author.is_verified,
+                    "exclusive": exclusive if hasattr(author, 'organization') else False
+                }
 
             serializer = FirestorePostOutputSerializer(paginated_posts, many=True, context={'authors_map': authors_map})
             return Response({
