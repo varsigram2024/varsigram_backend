@@ -215,7 +215,7 @@ class FeedView(APIView):
                         "name": author_name,
                         "display_name_slug": display_name_slug,
                         "is_verified": author.is_verified,
-                        "exclusive": exclusive
+                        "exclusive": exclusive if hasattr(author, 'organization') else False
                     }
                 except User.DoesNotExist:
                     continue
@@ -312,7 +312,7 @@ class PostListCreateFirestoreView(APIView):
                         "name": author_name,
                         "display_name_slug": display_name_slug,
                         "is_verified": author.is_verified,
-                        "exclusive": exclusive
+                        "exclusive": exclusive if hasattr(author, 'organization') else False
                     }
 
             # --- Has liked logic ---
@@ -635,7 +635,7 @@ class CommentListFirestoreView(APIView):
                         "display_name_slug": display_name_slug,
                         "profile_pic_url": author.profile_pic_url,
                         "is_verified": author.is_verified,
-                        "exclusive": exclusive
+                        "exclusive": exclusive if hasattr(author, 'organization') else False
                     }
 
             serializer = FirestoreCommentSerializer(comments_list, many=True, context={'authors_map': authors_map})
@@ -965,7 +965,7 @@ class ExclusiveOrgsRecentPostsView(APIView):
                         "profile_pic_url": author.profile_pic_url,
                         "name": author_name,
                         "is_verified": author.is_verified,
-                        "exclusive": exclusive
+                        "exclusive": exclusive if hasattr(author, 'organization') else False
                     }
                 except User.DoesNotExist:
                     continue
