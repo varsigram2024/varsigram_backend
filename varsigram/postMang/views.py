@@ -202,6 +202,8 @@ class FeedView(APIView):
                 reverse=False
             )
 
+            print(all_feed_posts)
+
             # Paginate
             paginated_posts = all_feed_posts_sorted[:page_size]
             next_cursor = None
