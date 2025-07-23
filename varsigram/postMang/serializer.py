@@ -33,6 +33,8 @@ class FirestoreCommentSerializer(serializers.Serializer):
     author_display_name_slug = serializers.CharField(read_only=True, required=False, allow_null=True)
     text = serializers.CharField(max_length=2000)
     timestamp = serializers.DateTimeField(read_only=True, required=False, allow_null=True)
+    author_profile_pic_url = serializers.URLField(read_only=True, allow_null=True, allow_blank=True)
+
 
     def to_representation(self, instance):
         ret = super().to_representation(instance)
@@ -42,9 +44,11 @@ class FirestoreCommentSerializer(serializers.Serializer):
             author = authors_map[str(author_id)]
             ret['author_name'] = author.get('name')
             ret['author_display_name_slug'] = author.get('display_name_slug')
+            ret['author_profile_pic_url'] = author.get('profile_pic_url')
         else:
             ret['author_name'] = "Unknown User"
             ret['author_display_name_slug'] = None
+            ret['author_profile_pic_url'] = None
         return ret
 
 class FirestoreLikeOutputSerializer(serializers.Serializer):
