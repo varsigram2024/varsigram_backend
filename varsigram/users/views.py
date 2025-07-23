@@ -64,6 +64,7 @@ class RegisterView(generics.GenericAPIView):
                 'message': 'User registered successfully',
                 'access': tokens['access'],   # Return the access token
                 'refresh': tokens['refresh'], # Return the refresh token
+                'firebase_custom_token': tokens['firebase_custom_token'],
             }, status=status.HTTP_201_CREATED)
         # No need for else: return Response(serializer.errors...) because of raise_exception=True
 
@@ -87,6 +88,7 @@ class LoginView(generics.GenericAPIView):
                 'message': 'Login successful',
                 'access': tokens['access'],
                 'refresh': tokens['refresh'],
+                'firebase_custom_token': tokens['firebase_custom_token'],
             }, status=status.HTTP_200_OK)
         # No need for else: return Response(serializer.errors...)
 
@@ -230,52 +232,46 @@ class UserProfileView(generics.GenericAPIView):
         except NotFound as e:
             raise e
 
-class UserSearchView(generics.RetrieveAPIView): # Changed to RetrieveAPIView as per template
+class UserSearchView(generics.RetrieveAPIView):
     """
     View for searching users (students or organizations) using Django ORM,
-    following the structure of the provided template.
+    with support for name query, faculty, and department filters.
     """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
-    def get(self, request, *args, **kwargs): # Changed to get method as per template
-        # Retrieve search parameters from query string
-        search_type = request.GET.get('type')
-        faculty = request.GET.get('faculty')      # Use request.GET.get() for consistency with template
+    def get(self, request, *args, **kwargs):
+        search_type = request.GET.get('type')  # "student" or "organization"
+        faculty = request.GET.get('faculty')
         department = request.GET.get('department')
+        query = request.GET.get('query', "").strip()  # New name-based search
 
-        # print(faculty, department, search_type) # Debugging output
-        
-        users_found = [] # List to hold the formatted user data
+        users_found = []
 
-        # --- Input Validation and ORM Query Construction ---
-        
         if not search_type:
-            # Explicitly require 'type' parameter if not defaulting to 'all users'
             return Response(
-                data={'message': 'Missing "type" parameter. Please specify "student" or "organization".'},
+                {"message": 'Missing "type" parameter. Please specify "student" or "organization".'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         if search_type == 'student':
-            # Stricter validation for student search: require faculty or department
-            if not faculty and not department:
+            if not faculty and not department and not query:
                 return Response(
-                    data={'message': 'For search type "student", provide at least "faculty" or "department" parameter.'},
+                    {"message": 'For search type "student", provide "faculty", "department", or "query".'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            queryset = User.objects.filter(student__isnull=False) # Start with all users who are students
+            queryset = User.objects.filter(student__isnull=False)
 
             if faculty:
-                # __icontains maps to ILIKE in PostgreSQL, which is case-insensitive and safe
                 queryset = queryset.filter(student__faculty__icontains=faculty)
             if department:
                 queryset = queryset.filter(student__department__icontains=department)
-            
-            # Populate results for students
+            if query:
+                queryset = queryset.filter(student__name__icontains=query)
+
             for user in queryset:
-                student = user.student # Access the related student object
+                student = user.student
                 users_found.append({
                     'email': user.email,
                     'faculty': student.faculty,
@@ -285,34 +281,27 @@ class UserSearchView(generics.RetrieveAPIView): # Changed to RetrieveAPIView as 
                 })
 
         elif search_type == 'organization':
-            # For organization search, you might add further required params here if needed
-            # For now, we'll return all organizations if no other filters are applied
-            
-            queryset = User.objects.filter(organization__isnull=False) # Start with all users who are organizations
+            queryset = User.objects.filter(organization__isnull=False)
 
-            # Example: Add organization-specific filtering if desired
-            # org_name = request.GET.get('org_name')
-            # if org_name:
-            #     queryset = queryset.filter(organization__organization_name__icontains=org_name)
+            if query:
+                queryset = queryset.filter(organization__organization_name__icontains=query)
 
-            # Populate results for organizations
             for user in queryset:
-                organization = user.organization # Access the related organization object
+                org = user.organization
                 users_found.append({
                     'email': user.email,
-                    'organization_name': organization.organization_name,
-                    'display_name_slug': organization.display_name_slug,
+                    'organization_name': org.organization_name,
+                    'display_name_slug': org.display_name_slug,
+                    'exclusive': org.exclusive,
                 })
         else:
-            # Handle invalid search_type
             return Response(
-                data={'message': 'Invalid "type" parameter. Must be "student" or "organization".'},
+                {"message": 'Invalid "type" parameter. Must be "student" or "organization".'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        # Return the collected user data
-        # JsonResponse is good, but DRF's Response is more integrated and flexible
+
         return Response(users_found, status=status.HTTP_200_OK)
+
 class UserDeactivateView(generics.GenericAPIView):
     """ Deactivate a user account """
     permission_classes = [IsAuthenticated]

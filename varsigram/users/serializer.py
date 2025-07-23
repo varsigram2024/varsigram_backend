@@ -16,6 +16,7 @@ import os
 from django.utils.timezone import now
 from .tasks import send_reset_email
 from django.utils.translation import gettext_lazy as _
+from firebase_admin import auth
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -178,10 +179,21 @@ class RegisterSerializer(serializers.ModelSerializer):
     # Returns both access and refresh tokens
     def get_tokens(self, user): # Changed method name to get_tokens
         refresh = RefreshToken.for_user(user)
-        return {
+        response_data = {
             'refresh': str(refresh),
             'access': str(refresh.access_token),
         }
+
+        try:
+            custom_claims = {
+                'is_verified': user.is_verified,
+            }
+            firebase_custom_token = auth.create_custom_token(str(user.id), custom_claims).decode('utf-8')
+            response_data['firebase_custom_token'] = firebase_custom_token
+        except Exception as e:
+            print(f"Error generating Firebase custom token: {e}")
+        
+        return response_data
 
 
     
@@ -205,10 +217,22 @@ class LoginSerializer(serializers.Serializer):
         # obj here is the validated_data from the serializer, which contains 'user'
         user = obj['user']
         refresh = RefreshToken.for_user(user)
-        return {
+        response_data = {
             'refresh': str(refresh),
             'access': str(refresh.access_token),
         }
+
+        try:
+            custom_claims = {
+                'is_verified': user.is_verified,
+            }
+            firebase_custom_token = auth.create_custom_token(str(user.id), custom_claims).decode('utf-8')
+            response_data['firebase_custom_token'] = firebase_custom_token
+        except Exception as e:
+            print(f"Error generating Firebase custom token: {e}")
+        
+        return response_data
+
 
 class PasswordResetSerializer(serializers.Serializer):
     email = serializers.EmailField()

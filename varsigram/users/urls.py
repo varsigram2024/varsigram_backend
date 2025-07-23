@@ -13,6 +13,8 @@ from .views import (
     GetSignedPostMediaUploadUrlView
 )
 
+app_name = 'user'
+
 urlpatterns = [
     path('welcome/', UserView.as_view(), name='welcome'),
     path('register/', RegisterView.as_view(), name='user register'),
