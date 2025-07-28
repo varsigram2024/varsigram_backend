@@ -224,6 +224,8 @@ class FeedView(APIView):
                 if hasattr(author, 'student'):
                     author_name = author.student.name
                     display_name_slug = getattr(author.student, 'display_name_slug', None)
+                    author_faculty = getattr(author.student, 'faculty', None)
+                    author_department = getattr(author.student, 'department', None)
                 elif hasattr(author, 'organization'):
                     author_name = author.organization.organization_name
                     display_name_slug = getattr(author.organization, 'display_name_slug', None)
@@ -235,7 +237,9 @@ class FeedView(APIView):
                     "name": author_name,
                     "display_name_slug": display_name_slug,
                     "is_verified": author.is_verified,
-                    "exclusive": exclusive if hasattr(author, 'organization') else False
+                    "exclusive": exclusive if hasattr(author, 'organization') else False,
+                    "faculty": author_faculty if hasattr(author, 'student') else None,
+                    "department": author_department if hasattr(author, 'student') else None,
                 }
 
             serializer = FirestorePostOutputSerializer(paginated_posts, many=True, context={'authors_map': authors_map})
@@ -308,6 +312,8 @@ class PostListCreateFirestoreView(APIView):
                     if hasattr(author, 'student'):
                         author_name = author.student.name
                         display_name_slug = getattr(author.student, 'display_name_slug', None)
+                        author_faculty = getattr(author.student, 'faculty', None)
+                        author_department = getattr(author.student, 'department', None)
                     elif hasattr(author, 'organization'):
                         author_name = author.organization.organization_name
                         display_name_slug = getattr(author.organization, 'display_name_slug', None)
@@ -320,7 +326,9 @@ class PostListCreateFirestoreView(APIView):
                         "name": author_name,
                         "display_name_slug": display_name_slug,
                         "is_verified": author.is_verified,
-                        "exclusive": exclusive if hasattr(author, 'organization') else False
+                        "exclusive": exclusive if hasattr(author, 'organization') else False,
+                        "faculty": author_faculty if hasattr(author, 'student') else None,
+                        "department": author_department if hasattr(author, 'student') else None,
                     }
 
             # --- Has liked logic ---
@@ -414,9 +422,13 @@ class PostDetailFirestoreView(APIView):
                     author_name = None
                     if hasattr(author, 'student') and author.student.name:
                         author_name = author.student.name
+                        display_name_slug = getattr(author.student, 'display_name_slug', None)
+                        author_faculty = author.student.faculty
+                        author_department = author.student.department
                     elif hasattr(author, 'organization') and author.organization.organization_name:
                         author_name = author.organization.organization_name
-                        exclusive = getattr(author.organization, 'exclusive', False)
+                        exclusive = author.organization.exclusive
+                        display_name_slug = getattr(author.organization, 'display_name_slug', None)
 
                     author_info = {
                         "id": author.id,
@@ -424,7 +436,10 @@ class PostDetailFirestoreView(APIView):
                         "profile_pic_url": author.profile_pic_url,
                         "name": author_name,
                         "is_verified": author.is_verified if hasattr(author, 'is_verified') else False,
-                        "exclusive": exclusive if hasattr(author, 'organization') else False
+                        "display_name_slug": display_name_slug,
+                        "exclusive": exclusive if hasattr(author, 'organization') else False,
+                        "faculty": author_faculty if hasattr(author, 'student') else None,
+                        "department": author_department if hasattr(author, 'student') else None,
                     }
                 except User.DoesNotExist:
                     author_info = {
@@ -438,6 +453,13 @@ class PostDetailFirestoreView(APIView):
                 author_info = None
             post_data['author_name'] = author_info['name'] if author_info else None
             post_data['author_profile_pic_url'] = author_info['profile_pic_url'] if author_info else None
+            post_data['is_verified'] = author_info['is_verified'] if author_info else None
+            post_data['author_id'] = author_info['id'] if author_info else None
+            post_data['author_email'] = author_info['email'] if author_info else None
+            post_data['author_exclusive'] = author_info['exclusive'] if author_info else False
+            post_data['author_faculty'] = author_info['faculty'] if author_info else None
+            post_data['author_department'] = author_info['department'] if author_info else None
+            post_data['author_display_name_slug'] = display_name_slug
 
             # Add has_liked
             post_data['has_liked'] = False
@@ -685,6 +707,8 @@ class CommentListFirestoreView(APIView):
                     if hasattr(author, 'student'):
                         author_name = author.student.name
                         display_name_slug = getattr(author.student, 'display_name_slug', None)
+                        faculty = getattr(author.student, 'faculty', None)
+                        department = getattr(author.student, 'department', None)
                     elif hasattr(author, 'organization'):
                         author_name = author.organization.organization_name
                         display_name_slug = getattr(author.organization, 'display_name_slug', None)
@@ -696,7 +720,9 @@ class CommentListFirestoreView(APIView):
                         "display_name_slug": display_name_slug,
                         "profile_pic_url": author.profile_pic_url,
                         "is_verified": author.is_verified,
-                        "exclusive": exclusive if hasattr(author, 'organization') else False
+                        "exclusive": exclusive if hasattr(author, 'organization') else False,
+                        "faculty": faculty if hasattr(author, 'student') else None,
+                        "department": department if hasattr(author, 'student') else None,
                     }
 
             serializer = FirestoreCommentSerializer(comments_list, many=True, context={'authors_map': authors_map})
@@ -1019,6 +1045,7 @@ class ExclusiveOrgsRecentPostsView(APIView):
                     author = User.objects.only('id', 'email', 'profile_pic_url', 'is_verified').get(id=user_id)
                     author_name = author.organization.organization_name
                     exclusive = getattr(author.organization, 'exclusive', False)
+                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
 
                     authors_map[str(author.id)] = {
                         "id": author.id,
@@ -1026,7 +1053,8 @@ class ExclusiveOrgsRecentPostsView(APIView):
                         "profile_pic_url": author.profile_pic_url,
                         "name": author_name,
                         "is_verified": author.is_verified,
-                        "exclusive": exclusive if hasattr(author, 'organization') else False
+                        "exclusive": exclusive if hasattr(author, 'organization') else False,
+                        "display_name_slug": display_name_slug
                     }
                 except User.DoesNotExist:
                     continue
@@ -1131,9 +1159,11 @@ class UserPostsFirestoreView(APIView):
                 author_name = None
                 if hasattr(author, 'student') and author.student.name:
                     author_name = author.student.name
+                    display_name_slug = getattr(author.student, 'display_name_slug', None)
                 elif hasattr(author, 'organization') and author.organization.organization_name:
                     author_name = author.organization.organization_name
                     exclusive = getattr(author.organization, 'exclusive', False)
+                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
 
                 authors_map[str(author.id)] = {
                     "id": author.id,
@@ -1141,7 +1171,8 @@ class UserPostsFirestoreView(APIView):
                     "profile_pic_url": author.profile_pic_url,
                     "name": author_name,
                     "is_verified": author.is_verified,
-                    "exclusive": exclusive if hasattr(author, 'organization') else False
+                    "exclusive": exclusive if hasattr(author, 'organization') else False,
+                    "display_name_slug": display_name_slug,
                 }
             except User.DoesNotExist:
                 pass
