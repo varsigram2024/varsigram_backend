@@ -578,6 +578,59 @@ class CommentCreateFirestoreView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+class CommentDetailFirestoreView(APIView):
+    """
+    Retrieve, update, or delete a comment for a specific post.
+    URL: /api/posts/{post_id}/comments/{comment_id}/
+    """
+    permission_classes = [permissions.IsAuthenticated, IsVerified]
+    authentication_classes = [JWTAuthentication]
+
+    def get_comment_ref(self, post_id, comment_id):
+        return db.collection('posts').document(post_id).collection('comments').document(comment_id)
+
+    def put(self, request, post_id, comment_id):
+        comment_ref = self.get_comment_ref(post_id, comment_id)
+        comment_doc = comment_ref.get()
+        if not comment_doc.exists:
+            return Response({"error": "Comment not found"}, status=status.HTTP_404_NOT_FOUND)
+        comment_data = comment_doc.to_dict()
+        if comment_data.get('author_id') != str(request.user.id):
+            return Response({"error": "You do not have permission to edit this comment."}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = FirestoreCommentSerializer(data=request.data, partial=True)
+        if serializer.is_valid():
+            update_payload = serializer.validated_data
+            if not update_payload:
+                return Response({"error": "No data provided for update."}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                comment_ref.update(update_payload)
+                updated_comment = comment_ref.get().to_dict()
+                updated_comment['id'] = comment_id
+                return Response(updated_comment, status=status.HTTP_200_OK)
+            except Exception as e:
+                return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, post_id, comment_id):
+        comment_ref = self.get_comment_ref(post_id, comment_id)
+        comment_doc = comment_ref.get()
+        if not comment_doc.exists:
+            return Response({"error": "Comment not found"}, status=status.HTTP_404_NOT_FOUND)
+        comment_data = comment_doc.to_dict()
+        if comment_data.get('author_id') != str(request.user.id):
+            return Response({"error": "You do not have permission to delete this comment."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            comment_ref.delete()
+            # Optionally decrement comment_count on the post
+            db.collection('posts').document(post_id).update({
+                'comment_count': firestore.Increment(-1)
+            })
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Exception as e:
+            return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class CommentListFirestoreView(APIView):
     """
     List comments for a specific post.
