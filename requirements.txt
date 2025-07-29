@@ -28,7 +28,6 @@ defusedxml==0.8.0rc2
 Django==5.2.4
 django-celery-results==2.5.1
 django-cors-headers==3.5.0
-# django-enum==1.2.1
 django-environ==0.10.0
 django-filter==2.4.0
 django-multiselectfield==0.1.12
@@ -75,7 +74,6 @@ kombu==5.4.2
 MarkupSafe==3.0.2
 matplotlib-inline==0.1.7
 msgpack==1.1.0
-mysql==0.0.3
 nest-asyncio==1.5.6
 oauthlib==3.2.2
 packaging==23.1
