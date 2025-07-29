@@ -1,6 +1,6 @@
 from django.urls import path
 from .views import (
-    GenericFollowView, GenericUnfollowView, ListFollowersView, ListFollowingView, PostListCreateFirestoreView, PostDetailFirestoreView,
+    CommentDetailFirestoreView, GenericFollowView, GenericUnfollowView, ListFollowersView, ListFollowingView, PostListCreateFirestoreView, PostDetailFirestoreView,
     CommentCreateFirestoreView, CommentListFirestoreView,
     LikeToggleFirestoreView, LikeListFirestoreView,
     UserPostsFirestoreView, FeedView,
@@ -15,6 +15,7 @@ urlpatterns = [
     path('posts/<str:post_id>/', PostDetailFirestoreView.as_view(), name='post-detail'),
     path('posts/<str:post_id>/comments/create/', CommentCreateFirestoreView.as_view(), name='post-comment-create'),
     path('posts/<str:post_id>/comments/', CommentListFirestoreView.as_view(), name='post-comments'),
+    path('posts/<str:post_id>/comments/<str:comment_id>/', CommentDetailFirestoreView.as_view(), name='post-comment-detail'),
     path('posts/<str:post_id>/like/', LikeToggleFirestoreView.as_view(), name='post-like'),
     path('posts/<str:post_id>/likes/', LikeListFirestoreView.as_view(), name='post-likes-list'), # New URL for listing likes
     # path('posts/<str:post_id>/share/', SharePostFirestoreView.as_view(), name='post-share'),

@@ -143,8 +143,11 @@ SIMPLE_JWT = {
 
 #Email Configuration (common parts, sensitive parts in production.py)
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.gmail.com'
-EMAIL_PORT = 465
+EMAIL_HOST = 'smtp.sendgrid.net'
+EMAIL_PORT = 587
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', default=None)  # Ensure this is set in your environment
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', default='noreply@yourdomain.com')
 
 
 # Password validation

@@ -671,7 +671,7 @@ class CommentListFirestoreView(APIView):
             page_size = int(request.query_params.get("page_size", 10))
             start_after_id = request.query_params.get("start_after")
 
-            comments_ref = post_ref.collection('comments').order_by('timestamp', direction=firestore.Query.ASCENDING)
+            comments_ref = post_ref.collection('comments').order_by('timestamp', direction=firestore.Query.DESCENDING)
 
             if start_after_id:
                 start_after_doc = post_ref.collection('comments').document(start_after_id).get()
