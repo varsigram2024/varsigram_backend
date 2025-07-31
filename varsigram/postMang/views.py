@@ -12,6 +12,8 @@ from datetime import datetime, timezone, timedelta
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from notifications_app.tasks import notify_all_users_new_post
+from notifications_app.utils import send_push_notification
 
 
 # Initialize Firestore client
@@ -375,6 +377,15 @@ class PostListCreateFirestoreView(APIView):
                 
                 created_post = doc_ref.get().to_dict()
                 created_post['id'] = doc_ref.id
+
+                # --- Offload notification to Celery ---
+                notify_all_users_new_post.delay(
+                    author_id=request.user.id,
+                    author_email=request.user.email,
+                    post_content=data['content'],
+                    post_id=created_post['id']
+                )
+
                 return Response(created_post, status=status.HTTP_201_CREATED)
             except Exception as e:
                 return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -588,6 +599,21 @@ class CommentCreateFirestoreView(APIView):
                 created_comment_doc = post_ref.collection('comments').document(new_comment_id).get()
                 created_comment_data = created_comment_doc.to_dict()
                 created_comment_data['id'] = new_comment_id
+
+                post_author_id = created_comment_data.get('author_id')
+                if post_author_id and post_author_id != str(request.user.id):
+                    post_author = User.objects.get(id=post_author_id)
+                    # Send push notification to the post author about the new comment
+                    send_push_notification(
+                        user=post_author,
+                        title="New Comment on Your Post",
+                        body=f"{request.user.email} commented: {created_comment_data['text'][:10]}",
+                        data={
+                            "type": "comment",
+                            "post_id": post_id,
+                            "comment_id": new_comment_id
+                        }
+                    )
                 
                 return Response(created_comment_data, status=status.HTTP_201_CREATED)
 
@@ -827,6 +853,22 @@ class LikeToggleFirestoreView(APIView):
 
             transaction = db.transaction()
             liked_now = toggle_like_transaction(transaction, post_ref, like_ref, like_doc.exists)
+
+            # --- Send notification to post author if liked ---
+            if liked_now:
+                post_data = post_doc.to_dict()
+                post_author_id = post_data.get('author_id')
+                if post_author_id and post_author_id != user_id:
+                    try:
+                        post_author = User.objects.get(id=post_author_id)
+                        send_push_notification(
+                            user=post_author,
+                            title="Your post was liked!",
+                            body=f"{request.user.email} liked your post.",
+                            data={"type": "like", "post_id": post_id}
+                        )
+                    except User.DoesNotExist:
+                        pass
 
             if liked_now:
                 return Response({"message": "Post liked successfully."}, status=status.HTTP_201_CREATED)

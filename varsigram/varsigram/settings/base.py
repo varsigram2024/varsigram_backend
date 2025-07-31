@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     #Local Apps
     'users',
     'chat',
+    'notifications_app',
     'corsheaders',
     'postMang',
     'django_celery_results',  # For storing task results in the database

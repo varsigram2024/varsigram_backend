@@ -525,6 +525,71 @@ Most endpoints require authentication. Authentication is handled using token-bas
 - Each post includes hydrated author information and share details if applicable.
 - If authenticated, the `has_liked`
 
+
+*   **`PUT /posts/{post_id}/comments/{comment_id}/`**  
+    *Edit a comment (author only)*
+
+    - **Description:** Update the content of a specific comment on a post. Only the comment's author can edit.
+    - **Authentication:** Required (JWT, verified user)
+    - **Path Parameters:**
+        - `post_id`: The ID of the post.
+        - `comment_id`: The ID of the comment to edit.
+    - **Request Body:**
+        ```json
+        {
+            "text": "Updated comment text"
+        }
+        ```
+    - **Response (200 OK):**
+        ```json
+        {
+            "id": "comment_id",
+            "text": "Updated comment text",
+            "author_id": "user_id",
+            "timestamp": "2025-07-22T12:34:56Z",
+            // ...other comment fields...
+        }
+        ```
+    - **Response (403 Forbidden):**
+        ```json
+        {
+            "error": "You do not have permission to edit this comment."
+        }
+        ```
+    - **Response (404 Not Found):**
+        ```json
+        {
+            "error": "Comment not found"
+        }
+        ```
+
+*   **`DELETE /posts/{post_id}/comments/{comment_id}/`**  
+    *Delete a comment (author only)*
+
+    - **Description:** Delete a specific comment on a post. Only the comment's author can delete.
+    - **Authentication:** Required (JWT, verified user)
+    - **Path Parameters:**
+        - `post_id`: The ID of the post.
+        - `comment_id`: The ID of the comment to delete.
+    - **Response (204 No Content):** Comment deleted successfully.
+    - **Response (403 Forbidden):**
+        ```json
+        {
+            "error": "You do not have permission to delete this comment."
+        }
+        ```
+    - **Response (404 Not Found):**
+        ```json
+        {
+            "error": "Comment not found"
+        }
+        ```
+
+**Notes:**
+- Only the author of the comment can edit or delete it.
+- Deleting a comment decrements the parent post's `comment_count`.
+- Editing supports partial updates (PATCH semantics via PUT).
+
 *   **`GET /feed/`**  [name='feed']
 
     *   Description: Retrieves the main feed of posts by students, ordered by `trending_score` (descending) and then by `timestamp` (descending). Supports cursor-based pagination.
@@ -750,5 +815,83 @@ Most endpoints require authentication. Authentication is handled using token-bas
     *   Response (200 OK): Returns `{"is_verified": true}` if the organization is exclusive and verified, otherwise `{"is_verified": false}`.
     *   Response (404 Not Found): If the organization profile is not found.
 
-...
+
+## Notification Device Endpoints
+
+### Register Device
+
+*   **`POST /notifications/register/`**  
+    Registers a device for push notifications.
+
+    - **Description:**  
+      Registers or updates a device for the authenticated user using the device's FCM registration token.
+
+    - **Authentication:**  
+      Required (JWT)
+
+    - **Request Body:**
+        ```json
+        {
+            "registration_id": "FCM_DEVICE_TOKEN",
+            "device_id": "optional_device_identifier"
+        }
+        ```
+
+    - **Response (201 Created):**
+        ```json
+        {
+            "registration_id": "FCM_DEVICE_TOKEN",
+            "device_id": "optional_device_identifier",
+            "user": 123,
+            "active": true
+        }
+        ```
+
+    - **Response (400 Bad Request):**
+        ```json
+        {
+            "detail": "registration_id is required."
+        }
+        ```
+
+---
+
+### Unregister Device
+
+*   **`DELETE /notifications/unregister/<registration_id>/`**  
+    Unregisters a device from push notifications.
+
+    - **Description:**  
+      Unregisters (deletes) a device for the authenticated user by its FCM registration token.
+
+    - **Authentication:**  
+      Required (JWT)
+
+    - **Path Parameters:**
+        - `registration_id`: The FCM registration token of the device to unregister.
+
+    - **Response (204 No Content):**  
+      Device unregistered successfully.
+
+    - **Response (404 Not Found):**
+        ```json
+        {
+            "detail": "Device not found or not associated with this user."
+        }
+        ```
+
+    - **Response (400 Bad Request):**
+        ```json
+        {
+            "detail": "registration_id is required."
+        }
+        ```
+
+**Notes:**
+- Devices must be registered to receive push notifications.
+- Unregistering a device disables notifications for that device only.
+- Only the authenticated user can register or unregister their own devices.
+
+
+
 
