@@ -5,6 +5,7 @@ from users.models import Student, Organization
 from rest_framework import serializers
 import logging
 from django.contrib.contenttypes.models import ContentType
+from notifications_app.utils import send_push_notification
 
 class FirestorePostCreateSerializer(serializers.Serializer):
     content = serializers.CharField(max_length=10000)
@@ -236,9 +237,9 @@ class GenericFollowSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         follower_type = validated_data.pop('follower_type')
-        follower_user_id = validated_data.pop('follower_id')  # This is user.id from frontend
+        follower_user_id = validated_data.pop('follower_id')
         followee_type = validated_data.pop('followee_type')
-        followee_user_id = validated_data.pop('followee_id')  # This is user.id from frontend
+        followee_user_id = validated_data.pop('followee_id')
 
         # Resolve profile IDs
         if follower_type.lower() == 'student':
@@ -249,9 +250,13 @@ class GenericFollowSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Invalid follower_type")
 
         if followee_type.lower() == 'student':
-            followee_id = Student.objects.get(user_id=followee_user_id).id
+            followee_obj = Student.objects.get(user_id=followee_user_id)
+            followee_id = followee_obj.id
+            followee_user = followee_obj.user
         elif followee_type.lower() == 'organization':
-            followee_id = Organization.objects.get(user_id=followee_user_id).id
+            followee_obj = Organization.objects.get(user_id=followee_user_id)
+            followee_id = followee_obj.id
+            followee_user = followee_obj.user
         else:
             raise serializers.ValidationError("Invalid followee_type")
 
@@ -264,4 +269,18 @@ class GenericFollowSerializer(serializers.ModelSerializer):
             followee_content_type=followee_content_type,
             followee_object_id=followee_id,
         )
+
+        # --- Send notification only if a new follow was created ---
+        if created and followee_user.id != follower_user_id:
+            send_push_notification(
+                user=followee_user,
+                title="You have a new follower!",
+                body=f"{self.context['request'].user.email} just followed you.",
+                data={
+                    "type": "follow",
+                    "follower_id": follower_user_id,
+                    "followee_id": followee_user.id
+                }
+            )
+        
         return follow
