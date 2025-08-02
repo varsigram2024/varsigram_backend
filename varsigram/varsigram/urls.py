@@ -36,10 +36,10 @@ urlpatterns = [
     path('api/v1/', include(chat_urls, namespace='chat_api')),
     path('api/v1/', include(post_urls, namespace='posts_api')),
     # Uncomment if you want to use JWT authentication
-    path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
-    path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-    path('api/token/verify/', TokenVerifyView.as_view(), name='token_verify'),
-    path('api/notifications/', include(notify_urls, namespace='notifications_api')),
+    path('api/v1/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('api/v1/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('api/v1/token/verify/', TokenVerifyView.as_view(), name='token_verify'),
+    path('api/v1/notifications/', include(notify_urls, namespace='notifications_api')),
     # path('callback/', GoogleLoginApi.as_view(), name='callback-sdk'),
     # path('redirect/', GoogleLoginRedirectApi.as_view(), name='redirect-sdk'),
 ]
