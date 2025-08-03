@@ -12,6 +12,8 @@ from datetime import datetime, timezone, timedelta
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from notifications_app.tasks import notify_all_users_new_post
+from notifications_app.utils import send_push_notification
 
 
 # Initialize Firestore client
@@ -224,6 +226,8 @@ class FeedView(APIView):
                 if hasattr(author, 'student'):
                     author_name = author.student.name
                     display_name_slug = getattr(author.student, 'display_name_slug', None)
+                    author_faculty = getattr(author.student, 'faculty', None)
+                    author_department = getattr(author.student, 'department', None)
                 elif hasattr(author, 'organization'):
                     author_name = author.organization.organization_name
                     display_name_slug = getattr(author.organization, 'display_name_slug', None)
@@ -235,7 +239,9 @@ class FeedView(APIView):
                     "name": author_name,
                     "display_name_slug": display_name_slug,
                     "is_verified": author.is_verified,
-                    "exclusive": exclusive if hasattr(author, 'organization') else False
+                    "exclusive": exclusive if hasattr(author, 'organization') else False,
+                    "faculty": author_faculty if hasattr(author, 'student') else None,
+                    "department": author_department if hasattr(author, 'student') else None,
                 }
 
             serializer = FirestorePostOutputSerializer(paginated_posts, many=True, context={'authors_map': authors_map})
@@ -308,6 +314,8 @@ class PostListCreateFirestoreView(APIView):
                     if hasattr(author, 'student'):
                         author_name = author.student.name
                         display_name_slug = getattr(author.student, 'display_name_slug', None)
+                        author_faculty = getattr(author.student, 'faculty', None)
+                        author_department = getattr(author.student, 'department', None)
                     elif hasattr(author, 'organization'):
                         author_name = author.organization.organization_name
                         display_name_slug = getattr(author.organization, 'display_name_slug', None)
@@ -320,7 +328,9 @@ class PostListCreateFirestoreView(APIView):
                         "name": author_name,
                         "display_name_slug": display_name_slug,
                         "is_verified": author.is_verified,
-                        "exclusive": exclusive if hasattr(author, 'organization') else False
+                        "exclusive": exclusive if hasattr(author, 'organization') else False,
+                        "faculty": author_faculty if hasattr(author, 'student') else None,
+                        "department": author_department if hasattr(author, 'student') else None,
                     }
 
             # --- Has liked logic ---
@@ -367,6 +377,15 @@ class PostListCreateFirestoreView(APIView):
                 
                 created_post = doc_ref.get().to_dict()
                 created_post['id'] = doc_ref.id
+
+                # --- Offload notification to Celery ---
+                notify_all_users_new_post.delay(
+                    author_id=request.user.id,
+                    author_email=request.user.email,
+                    post_content=data['content'],
+                    post_id=created_post['id']
+                )
+
                 return Response(created_post, status=status.HTTP_201_CREATED)
             except Exception as e:
                 return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -414,9 +433,13 @@ class PostDetailFirestoreView(APIView):
                     author_name = None
                     if hasattr(author, 'student') and author.student.name:
                         author_name = author.student.name
+                        display_name_slug = getattr(author.student, 'display_name_slug', None)
+                        author_faculty = author.student.faculty
+                        author_department = author.student.department
                     elif hasattr(author, 'organization') and author.organization.organization_name:
                         author_name = author.organization.organization_name
-                        exclusive = getattr(author.organization, 'exclusive', False)
+                        exclusive = author.organization.exclusive
+                        display_name_slug = getattr(author.organization, 'display_name_slug', None)
 
                     author_info = {
                         "id": author.id,
@@ -424,7 +447,10 @@ class PostDetailFirestoreView(APIView):
                         "profile_pic_url": author.profile_pic_url,
                         "name": author_name,
                         "is_verified": author.is_verified if hasattr(author, 'is_verified') else False,
-                        "exclusive": exclusive if hasattr(author, 'organization') else False
+                        "display_name_slug": display_name_slug,
+                        "exclusive": exclusive if hasattr(author, 'organization') else False,
+                        "faculty": author_faculty if hasattr(author, 'student') else None,
+                        "department": author_department if hasattr(author, 'student') else None,
                     }
                 except User.DoesNotExist:
                     author_info = {
@@ -438,6 +464,13 @@ class PostDetailFirestoreView(APIView):
                 author_info = None
             post_data['author_name'] = author_info['name'] if author_info else None
             post_data['author_profile_pic_url'] = author_info['profile_pic_url'] if author_info else None
+            post_data['is_verified'] = author_info['is_verified'] if author_info else None
+            post_data['author_id'] = author_info['id'] if author_info else None
+            post_data['author_email'] = author_info['email'] if author_info else None
+            post_data['author_exclusive'] = author_info['exclusive'] if author_info else False
+            post_data['author_faculty'] = author_info['faculty'] if author_info else None
+            post_data['author_department'] = author_info['department'] if author_info else None
+            post_data['author_display_name_slug'] = display_name_slug
 
             # Add has_liked
             post_data['has_liked'] = False
@@ -566,6 +599,21 @@ class CommentCreateFirestoreView(APIView):
                 created_comment_doc = post_ref.collection('comments').document(new_comment_id).get()
                 created_comment_data = created_comment_doc.to_dict()
                 created_comment_data['id'] = new_comment_id
+
+                post_author_id = created_comment_data.get('author_id')
+                if post_author_id and post_author_id != str(request.user.id):
+                    post_author = User.objects.get(id=post_author_id)
+                    # Send push notification to the post author about the new comment
+                    send_push_notification(
+                        user=post_author,
+                        title="New Comment on Your Post",
+                        body=f"{request.user.email} commented: {created_comment_data['text'][:10]}",
+                        data={
+                            "type": "comment",
+                            "post_id": post_id,
+                            "comment_id": new_comment_id
+                        }
+                    )
                 
                 return Response(created_comment_data, status=status.HTTP_201_CREATED)
 
@@ -576,6 +624,59 @@ class CommentCreateFirestoreView(APIView):
                 # print(f"Error creating comment with transaction: {e}") # Log the full error for debugging
                 return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CommentDetailFirestoreView(APIView):
+    """
+    Retrieve, update, or delete a comment for a specific post.
+    URL: /api/posts/{post_id}/comments/{comment_id}/
+    """
+    permission_classes = [permissions.IsAuthenticated, IsVerified]
+    authentication_classes = [JWTAuthentication]
+
+    def get_comment_ref(self, post_id, comment_id):
+        return db.collection('posts').document(post_id).collection('comments').document(comment_id)
+
+    def put(self, request, post_id, comment_id):
+        comment_ref = self.get_comment_ref(post_id, comment_id)
+        comment_doc = comment_ref.get()
+        if not comment_doc.exists:
+            return Response({"error": "Comment not found"}, status=status.HTTP_404_NOT_FOUND)
+        comment_data = comment_doc.to_dict()
+        if comment_data.get('author_id') != str(request.user.id):
+            return Response({"error": "You do not have permission to edit this comment."}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = FirestoreCommentSerializer(data=request.data, partial=True)
+        if serializer.is_valid():
+            update_payload = serializer.validated_data
+            if not update_payload:
+                return Response({"error": "No data provided for update."}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                comment_ref.update(update_payload)
+                updated_comment = comment_ref.get().to_dict()
+                updated_comment['id'] = comment_id
+                return Response(updated_comment, status=status.HTTP_200_OK)
+            except Exception as e:
+                return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, post_id, comment_id):
+        comment_ref = self.get_comment_ref(post_id, comment_id)
+        comment_doc = comment_ref.get()
+        if not comment_doc.exists:
+            return Response({"error": "Comment not found"}, status=status.HTTP_404_NOT_FOUND)
+        comment_data = comment_doc.to_dict()
+        if comment_data.get('author_id') != str(request.user.id):
+            return Response({"error": "You do not have permission to delete this comment."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            comment_ref.delete()
+            # Optionally decrement comment_count on the post
+            db.collection('posts').document(post_id).update({
+                'comment_count': firestore.Increment(-1)
+            })
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Exception as e:
+            return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class CommentListFirestoreView(APIView):
@@ -596,7 +697,7 @@ class CommentListFirestoreView(APIView):
             page_size = int(request.query_params.get("page_size", 10))
             start_after_id = request.query_params.get("start_after")
 
-            comments_ref = post_ref.collection('comments').order_by('timestamp', direction=firestore.Query.ASCENDING)
+            comments_ref = post_ref.collection('comments').order_by('timestamp', direction=firestore.Query.DESCENDING)
 
             if start_after_id:
                 start_after_doc = post_ref.collection('comments').document(start_after_id).get()
@@ -632,6 +733,8 @@ class CommentListFirestoreView(APIView):
                     if hasattr(author, 'student'):
                         author_name = author.student.name
                         display_name_slug = getattr(author.student, 'display_name_slug', None)
+                        faculty = getattr(author.student, 'faculty', None)
+                        department = getattr(author.student, 'department', None)
                     elif hasattr(author, 'organization'):
                         author_name = author.organization.organization_name
                         display_name_slug = getattr(author.organization, 'display_name_slug', None)
@@ -643,7 +746,9 @@ class CommentListFirestoreView(APIView):
                         "display_name_slug": display_name_slug,
                         "profile_pic_url": author.profile_pic_url,
                         "is_verified": author.is_verified,
-                        "exclusive": exclusive if hasattr(author, 'organization') else False
+                        "exclusive": exclusive if hasattr(author, 'organization') else False,
+                        "faculty": faculty if hasattr(author, 'student') else None,
+                        "department": department if hasattr(author, 'student') else None,
                     }
 
             serializer = FirestoreCommentSerializer(comments_list, many=True, context={'authors_map': authors_map})
@@ -748,6 +853,22 @@ class LikeToggleFirestoreView(APIView):
 
             transaction = db.transaction()
             liked_now = toggle_like_transaction(transaction, post_ref, like_ref, like_doc.exists)
+
+            # --- Send notification to post author if liked ---
+            if liked_now:
+                post_data = post_doc.to_dict()
+                post_author_id = post_data.get('author_id')
+                if post_author_id and post_author_id != user_id:
+                    try:
+                        post_author = User.objects.get(id=post_author_id)
+                        send_push_notification(
+                            user=post_author,
+                            title="Your post was liked!",
+                            body=f"{request.user.email} liked your post.",
+                            data={"type": "like", "post_id": post_id}
+                        )
+                    except User.DoesNotExist:
+                        pass
 
             if liked_now:
                 return Response({"message": "Post liked successfully."}, status=status.HTTP_201_CREATED)
@@ -966,6 +1087,7 @@ class ExclusiveOrgsRecentPostsView(APIView):
                     author = User.objects.only('id', 'email', 'profile_pic_url', 'is_verified').get(id=user_id)
                     author_name = author.organization.organization_name
                     exclusive = getattr(author.organization, 'exclusive', False)
+                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
 
                     authors_map[str(author.id)] = {
                         "id": author.id,
@@ -973,7 +1095,8 @@ class ExclusiveOrgsRecentPostsView(APIView):
                         "profile_pic_url": author.profile_pic_url,
                         "name": author_name,
                         "is_verified": author.is_verified,
-                        "exclusive": exclusive if hasattr(author, 'organization') else False
+                        "exclusive": exclusive if hasattr(author, 'organization') else False,
+                        "display_name_slug": display_name_slug
                     }
                 except User.DoesNotExist:
                     continue
@@ -1078,9 +1201,11 @@ class UserPostsFirestoreView(APIView):
                 author_name = None
                 if hasattr(author, 'student') and author.student.name:
                     author_name = author.student.name
+                    display_name_slug = getattr(author.student, 'display_name_slug', None)
                 elif hasattr(author, 'organization') and author.organization.organization_name:
                     author_name = author.organization.organization_name
                     exclusive = getattr(author.organization, 'exclusive', False)
+                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
 
                 authors_map[str(author.id)] = {
                     "id": author.id,
@@ -1088,7 +1213,8 @@ class UserPostsFirestoreView(APIView):
                     "profile_pic_url": author.profile_pic_url,
                     "name": author_name,
                     "is_verified": author.is_verified,
-                    "exclusive": exclusive if hasattr(author, 'organization') else False
+                    "exclusive": exclusive if hasattr(author, 'organization') else False,
+                    "display_name_slug": display_name_slug,
                 }
             except User.DoesNotExist:
                 pass

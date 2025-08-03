@@ -5,6 +5,7 @@ from users.models import Student, Organization
 from rest_framework import serializers
 import logging
 from django.contrib.contenttypes.models import ContentType
+from notifications_app.utils import send_push_notification
 
 class FirestorePostCreateSerializer(serializers.Serializer):
     content = serializers.CharField(max_length=10000)
@@ -34,6 +35,9 @@ class FirestoreCommentSerializer(serializers.Serializer):
     text = serializers.CharField(max_length=2000)
     timestamp = serializers.DateTimeField(read_only=True, required=False, allow_null=True)
     author_profile_pic_url = serializers.URLField(read_only=True, allow_null=True, allow_blank=True)
+    author_faculty = serializers.CharField(read_only=True, required=False, allow_null=True)
+    author_department = serializers.CharField(read_only=True, required=False, allow_null=True)
+    author_exclusive = serializers.BooleanField(read_only=True, default=False, help_text="True if the author is an exclusive organization.")
 
 
     def to_representation(self, instance):
@@ -45,6 +49,12 @@ class FirestoreCommentSerializer(serializers.Serializer):
             ret['author_name'] = author.get('name')
             ret['author_display_name_slug'] = author.get('display_name_slug')
             ret['author_profile_pic_url'] = author.get('profile_pic_url')
+            ret['author_faculty'] = author.get('faculty')
+            ret['author_department'] = author.get('department')
+            # Ensure author_exclusive is a boolean
+            ret['author_exclusive'] = author.get('exclusive', False)
+            if not isinstance(ret['author_exclusive'], bool):
+                ret['author_exclusive'] = False
         else:
             ret['author_name'] = "Unknown User"
             ret['author_display_name_slug'] = None
@@ -107,6 +117,9 @@ class FirestorePostOutputSerializer(serializers.Serializer):
     last_engagement_at = serializers.DateTimeField(required=False, allow_null=True)
 
     author_display_name_slug = serializers.CharField(read_only=True, help_text="The display_name_slug of the post's author (denormalized).", required=False, allow_null=True)
+    author_exclusive = serializers.BooleanField(read_only=True, help_text="True if the author is an exclusive organization.", required=False, default=False)
+    author_faculty = serializers.CharField(read_only=True, help_text="The faculty of the post's author (if applicable).", required=False, allow_null=True)
+    author_department = serializers.CharField(read_only=True, help_text="The department of the post's author (if applicable).", required=False, allow_null=True)
     shares = serializers.ListField(child=serializers.DictField(), read_only=True, required=False)
 
     # You might need to add a custom method for representation if your Firestore
@@ -131,15 +144,27 @@ class FirestorePostOutputSerializer(serializers.Serializer):
                 ret['author_name'] = author.get('name')
                 ret['author_profile_pic_url'] = author.get('profile_pic_url')
                 ret['author_display_name_slug'] = author.get('display_name_slug')
+                ret['author_exclusive'] = author.get('exclusive', False)
+                ret['author_faculty'] = author.get('faculty', None)
+                ret['author_department'] = author.get('department', None)
+                # Ensure author_exclusive is a boolean
+                if not isinstance(ret['author_exclusive'], bool):
+                    ret['author_exclusive'] = False
             else:
                 logging.warning(f"Author with PostgreSQL ID {author_id} not found in authors_map for post {ret.get('id')}.")
                 ret['author_name'] = "Unknown User"
                 ret['author_profile_pic_url'] = None
                 ret['author_display_name_slug'] = None
+                ret['author_exclusive'] = False
+                ret['author_faculty'] = None
+                ret['author_department'] = None
         else:
             ret['author_name'] = "Unknown User"
             ret['author_profile_pic_url'] = None
             ret['author_display_name_slug'] = None
+            ret['author_exclusive'] = False
+            ret['author_faculty'] = None
+            ret['author_department'] = None
 
         # Add shares from context if available
         shares_map = self.context.get('shares_map', {})
@@ -212,9 +237,9 @@ class GenericFollowSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         follower_type = validated_data.pop('follower_type')
-        follower_user_id = validated_data.pop('follower_id')  # This is user.id from frontend
+        follower_user_id = validated_data.pop('follower_id')
         followee_type = validated_data.pop('followee_type')
-        followee_user_id = validated_data.pop('followee_id')  # This is user.id from frontend
+        followee_user_id = validated_data.pop('followee_id')
 
         # Resolve profile IDs
         if follower_type.lower() == 'student':
@@ -225,9 +250,13 @@ class GenericFollowSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Invalid follower_type")
 
         if followee_type.lower() == 'student':
-            followee_id = Student.objects.get(user_id=followee_user_id).id
+            followee_obj = Student.objects.get(user_id=followee_user_id)
+            followee_id = followee_obj.id
+            followee_user = followee_obj.user
         elif followee_type.lower() == 'organization':
-            followee_id = Organization.objects.get(user_id=followee_user_id).id
+            followee_obj = Organization.objects.get(user_id=followee_user_id)
+            followee_id = followee_obj.id
+            followee_user = followee_obj.user
         else:
             raise serializers.ValidationError("Invalid followee_type")
 
@@ -240,4 +269,18 @@ class GenericFollowSerializer(serializers.ModelSerializer):
             followee_content_type=followee_content_type,
             followee_object_id=followee_id,
         )
+
+        # --- Send notification only if a new follow was created ---
+        if created and followee_user.id != follower_user_id:
+            send_push_notification(
+                user=followee_user,
+                title="You have a new follower!",
+                body=f"{self.context['request'].user.email} just followed you.",
+                data={
+                    "type": "follow",
+                    "follower_id": follower_user_id,
+                    "followee_id": followee_user.id
+                }
+            )
+        
         return follow
