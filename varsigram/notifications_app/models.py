@@ -10,7 +10,7 @@ class Device(models.Model):
         null=True, # Allow anonymous devices if needed
     )
     registration_id = models.CharField(max_length=255, unique=True, help_text="FCM device registration token")
-    device_id = models.CharField(max_length=255, blank=True, null=True, unique=True,
+    device_id = models.CharField(max_length=512, blank=True, null=True, unique=True,
                                  help_text="Unique device identifier (e.g., UUID for mobile app)")
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
