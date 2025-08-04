@@ -1,7 +1,8 @@
 import firebase_admin
 from firebase_admin import messaging
-from .models import Device
+from .models import Device, Notification
 from django.conf import settings
+from django.utils import timezone
 
 def send_push_notification(user, title, body, data=None):
     """
@@ -16,6 +17,25 @@ def send_push_notification(user, title, body, data=None):
     if not registration_ids:
         print(f"No active devices found for user {user.email}.")
         return
+    
+    # --- Create Notification record in the database ---
+    try:
+        notification_record = Notification.objects.create(
+            user=user,
+            title=title,
+            body=body,
+            data=data # This will store the custom data in the DB
+        )
+        # It's useful to include the notification_record.id in the FCM data payload
+        # so the frontend knows which specific notification to mark as read.
+        if data is None:
+            data = {}
+        data['notification_id'] = str(notification_record.id) # Convert UUID to string if using UUIDField for ID
+        print(f"Created notification record {notification_record.id} for user {user.email}")
+    except Exception as e:
+        print(f"Error creating notification record for user {user.email}: {e}")
+        # Decide if you want to abort push or continue without DB record
+        return # Abort if DB record fails, as frontend needs this ID
 
     message = messaging.MulticastMessage(
         notification=messaging.Notification(

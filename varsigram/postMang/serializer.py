@@ -244,8 +244,10 @@ class GenericFollowSerializer(serializers.ModelSerializer):
         # Resolve profile IDs
         if follower_type.lower() == 'student':
             follower_id = Student.objects.get(user_id=follower_user_id).id
+            follower_name = Student.objects.get(user_id=follower_user_id).name
         elif follower_type.lower() == 'organization':
             follower_id = Organization.objects.get(user_id=follower_user_id).id
+            follower_name = Organization.objects.get(user_id=follower_user_id).organization_name
         else:
             raise serializers.ValidationError("Invalid follower_type")
 
@@ -270,12 +272,15 @@ class GenericFollowSerializer(serializers.ModelSerializer):
             followee_object_id=followee_id,
         )
 
+        
+
+
         # --- Send notification only if a new follow was created ---
         if created and followee_user.id != follower_user_id:
             send_push_notification(
                 user=followee_user,
                 title="You have a new follower!",
-                body=f"{self.context['request'].user.email} just followed you.",
+                body=f"{follower_name} just followed you.",
                 data={
                     "type": "follow",
                     "follower_id": follower_user_id,
