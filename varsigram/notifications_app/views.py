@@ -1,3 +1,4 @@
+from datetime import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from .models import Device, Notification
@@ -112,3 +113,15 @@ class UnreadNotificationCountView(APIView):
     def get(self, request, *args, **kwargs):
         unread_count = Notification.objects.filter(user=request.user, is_read=False).count()
         return Response({"unread_count": unread_count}, status=status.HTTP_200_OK)
+
+
+class NotificationMarkAllReadView(APIView):
+    """
+    Marks all unread notifications for the authenticated user as read.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        unread_notifications = Notification.objects.filter(user=request.user, is_read=False)
+        updated_count = unread_notifications.update(is_read=True, read_at=timezone.now())
+        return Response({"message": f"Successfully marked {updated_count} notifications as read."}, status=status.HTTP_200_OK)
