@@ -360,6 +360,16 @@ class PostListCreateFirestoreView(APIView):
         if serializer.is_valid():
             data = serializer.validated_data
             try:
+                author_name = ""
+
+                if hasattr(request.user, 'student'):
+                    author_name = request.user.student.name
+                elif hasattr(request.user, 'organization'):
+                    author_name = request.user.organization.organization_name
+                else:
+                    author_name = request.user.email
+                
+
                 post_payload = {
                     'author_id': str(request.user.id), # Link to Django User ID
                     # 'author_email': request.user.email, # Denormalize for convenience
@@ -381,7 +391,7 @@ class PostListCreateFirestoreView(APIView):
                 # --- Offload notification to Celery ---
                 notify_all_users_new_post.delay(
                     author_id=request.user.id,
-                    author_email=request.user.email,
+                    author_email=author_name,
                     post_content=data['content'],
                     post_id=created_post['id']
                 )
@@ -567,6 +577,14 @@ class CommentCreateFirestoreView(APIView):
             }
 
             try:
+                user_name = ""
+                if hasattr(request.user, 'student'):
+                    user_name = request.user.student.name
+                elif hasattr(request.user, 'organization'):
+                    user_name = request.user.organization.organization_name
+                else:
+                    user_name = request.user.email
+
                 # Define the transactional function
                 # It takes the transaction object and any other arguments it needs
                 @firestore.transactional
@@ -607,7 +625,7 @@ class CommentCreateFirestoreView(APIView):
                     send_push_notification(
                         user=post_author,
                         title="New Comment on Your Post",
-                        body=f"{request.user.email} commented: {created_comment_data['text'][:10]}",
+                        body=f"{user_name} commented: {created_comment_data['text'][:10]}",
                         data={
                             "type": "comment",
                             "post_id": post_id,
@@ -822,6 +840,14 @@ class LikeToggleFirestoreView(APIView):
         like_ref = post_ref.collection('likes').document(user_id) # Document ID is the user's ID
 
         try:
+            user_name = ""
+            if hasattr(request.user, 'student'):
+                user_name = request.user.student.name
+            elif hasattr(request.user, 'organization'):
+                user_name = request.user.organization.organization_name
+            else:
+                user_name = request.user.email
+            
             post_doc = post_ref.get()
             if not post_doc.exists:
                 return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -864,7 +890,7 @@ class LikeToggleFirestoreView(APIView):
                         send_push_notification(
                             user=post_author,
                             title="Your post was liked!",
-                            body=f"{request.user.email} liked your post.",
+                            body=f"{user_name} liked your post.",
                             data={"type": "like", "post_id": post_id}
                         )
                     except User.DoesNotExist:
