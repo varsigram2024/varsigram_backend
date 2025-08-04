@@ -29,10 +29,10 @@ class RegisterDeviceView(generics.CreateAPIView):
         )
         serializer = self.get_serializer(device)
         if created:
-            print(f"New device registered for {request.user.email}: {registration_id}")
+            print(f"New device registered for {self.request.user.email}: {registration_id}")
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         else:
-            print(f"Device updated/re-activated for {request.user.email}: {registration_id}")
+            print(f"Device updated/re-activated for {self.request.user.email}: {registration_id}")
             # If the device existed and was just updated, return 200 OK
             return Response(serializer.data, status=status.HTTP_200_OK)
 
