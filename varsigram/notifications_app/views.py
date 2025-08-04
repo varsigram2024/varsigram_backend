@@ -1,4 +1,4 @@
-from datetime import timezone
+from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from .models import Device, Notification

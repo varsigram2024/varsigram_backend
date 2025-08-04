@@ -620,18 +620,22 @@ class CommentCreateFirestoreView(APIView):
 
                 post_author_id = created_comment_data.get('author_id')
                 if post_author_id and post_author_id != str(request.user.id):
-                    post_author = User.objects.get(id=post_author_id)
-                    # Send push notification to the post author about the new comment
-                    send_push_notification(
-                        user=post_author,
-                        title="New Comment on Your Post",
-                        body=f"{user_name} commented: {created_comment_data['text'][:10]}",
-                        data={
-                            "type": "comment",
-                            "post_id": post_id,
-                            "comment_id": new_comment_id
-                        }
-                    )
+                    try:
+                        post_author = User.objects.get(id=post_author_id)
+                        # Send push notification to the post author about the new comment
+                        send_push_notification(
+                            user=post_author,
+                            title="New Comment on Your Post",
+                            body=f"{user_name} commented: {created_comment_data['text'][:10]}",
+                            data={
+                                "type": "comment",
+                                "post_id": post_id,
+                                "comment_id": new_comment_id
+                            }
+                        )
+                    except User.DoesNotExist:
+                        # If the post author does not exist, we can skip sending the notification
+                        pass
                 
                 return Response(created_comment_data, status=status.HTTP_201_CREATED)
 
