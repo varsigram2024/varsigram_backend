@@ -391,7 +391,7 @@ class PostListCreateFirestoreView(APIView):
                 # --- Offload notification to Celery ---
                 notify_all_users_new_post.delay(
                     author_id=request.user.id,
-                    author_email=author_name,
+                    author_name=author_name,
                     post_content=data['content'],
                     post_id=created_post['id']
                 )
@@ -618,7 +618,9 @@ class CommentCreateFirestoreView(APIView):
                 created_comment_data = created_comment_doc.to_dict()
                 created_comment_data['id'] = new_comment_id
 
-                post_author_id = created_comment_data.get('author_id')
+                post_author_id = post_doc_snapshot.to_dict().get('author_id')
+                
+                # Check if the post author exists and is not the commenter
                 if post_author_id and post_author_id != str(request.user.id):
                     try:
                         post_author = User.objects.get(id=post_author_id)
@@ -626,15 +628,15 @@ class CommentCreateFirestoreView(APIView):
                         send_push_notification(
                             user=post_author,
                             title="New Comment on Your Post",
-                            body=f"{user_name} commented: {created_comment_data['text'][:10]}",
+                            body=f"{user_name} commented: {comment_payload['text'][:50]}...",
                             data={
                                 "type": "comment",
                                 "post_id": post_id,
-                                "comment_id": new_comment_id
+                                "comment_id": new_comment_id,
+                                "commenter_id": user_id # The ID of the person who commented
                             }
                         )
                     except User.DoesNotExist:
-                        # If the post author does not exist, we can skip sending the notification
                         pass
                 
                 return Response(created_comment_data, status=status.HTTP_201_CREATED)

@@ -277,14 +277,22 @@ class GenericFollowSerializer(serializers.ModelSerializer):
 
         # --- Send notification only if a new follow was created ---
         if created and followee_user.id != follower_user_id:
+            # Get the name of the follower (the person who just followed)
+            follower_name = ""
+            if hasattr(self.context['request'].user, 'student'):
+                follower_name = self.context['request'].user.student.name
+            elif hasattr(self.context['request'].user, 'organization'):
+                follower_name = self.context['request'].user.organization.organization_name
+            else:
+                follower_name = self.context['request'].user.email
+
             send_push_notification(
-                user=followee_user,
+                user=followee_user, # The user who is being followed
                 title="You have a new follower!",
                 body=f"{follower_name} just followed you.",
                 data={
                     "type": "follow",
                     "follower_id": follower_user_id,
-                    "followee_id": followee_user.id
                 }
             )
         
