@@ -146,18 +146,19 @@ Most endpoints require authentication. Authentication is handled using token-bas
 
 *   **`GET /users/search/`**  [name='user-search']
 
-    *   Description: Search for users (students or organizations) using filters such as name, faculty, and department.
+    *   Description: Search for users (students or organizations) using filters such as name, faculty, and department.  
+        This endpoint searches both Students and Organizations models and returns a unified result set.
     *   Request: `GET`
     *   Authentication: Required (JWT)
     *   Query Parameters:
-        *   `type`: (required) `"student"` or `"organization"` — specifies which user type to search.
+        *   `query`: (optional) Search by student name or organization name (case-insensitive, partial match).
         *   `faculty`: (optional, students only) Filter by faculty name (case-insensitive).
         *   `department`: (optional, students only) Filter by department name (case-insensitive).
-        *   `query`: (optional) Search by student name or organization name (case-insensitive).
     *   Response (200 OK): Returns a list of matching users.
         ```json
         [
             {
+                "type": "student",
                 "email": "student@email.com",
                 "faculty": "Science",
                 "department": "Mathematics",
@@ -165,6 +166,7 @@ Most endpoints require authentication. Authentication is handled using token-bas
                 "display_name_slug": "john-doe-1"
             },
             {
+                "type": "organization",
                 "email": "org@email.com",
                 "organization_name": "Varsigram Inc",
                 "display_name_slug": "varsigram-inc-1",
@@ -172,16 +174,10 @@ Most endpoints require authentication. Authentication is handled using token-bas
             }
         ]
         ```
-    *   Response (400 Bad Request): If required parameters are missing or invalid.
+    *   Response (400 Bad Request): If no valid filter is provided.
         ```json
         {
-            "message": "Missing \"type\" parameter. Please specify \"student\" or \"organization\"."
-        }
-        ```
-        or
-        ```json
-        {
-            "message": "Invalid \"type\" parameter. Must be \"student\" or \"organization\"."
+            "message": "Provide at least \"query\", \"faculty\", or \"department\"."
         }
         ```
     *   Response (200 OK, empty): If no users match the search.
@@ -190,9 +186,11 @@ Most endpoints require authentication. Authentication is handled using token-bas
         ```
 
 **Notes:**
-- For `type=student`, at least one of `faculty`, `department`, or `query` must be provided.
-- For `type=organization`, only `query` is supported for filtering.
-- All searches are case-insensitive and partial matches are supported.
+- The endpoint searches both students and organizations and combines results.
+- For students, you can filter by `faculty`, `department`, or `query`.
+- For organizations, only `query` is supported for filtering.
+- All searches are case-insensitive and support partial matches.
+- The `type` field in each result indicates whether
 
 
 *   **`POST /deactivate/`**  [name='user-deactivate']

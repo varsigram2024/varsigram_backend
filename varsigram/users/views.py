@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.pagination import PageNumberPagination
 from rest_framework import status, generics
 # from django.core.exceptions import ObjectDoesNotExist
 from rest_framework.exceptions import NotFound
@@ -232,75 +233,69 @@ class UserProfileView(generics.GenericAPIView):
         except NotFound as e:
             raise e
 
-class UserSearchView(generics.RetrieveAPIView):
+
+class UserSearchPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 50
+
+class UserSearchView(APIView):
     """
-    View for searching users (students or organizations) using Django ORM,
-    with support for name query, faculty, and department filters.
+    Search users by name across both Students and Organizations, with pagination.
     """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
     def get(self, request, *args, **kwargs):
-        search_type = request.GET.get('type')  # "student" or "organization"
+        query = request.GET.get('query', '').strip()
         faculty = request.GET.get('faculty')
         department = request.GET.get('department')
-        query = request.GET.get('query', "").strip()  # New name-based search
 
-        users_found = []
-
-        if not search_type:
+        if not query and not faculty and not department:
             return Response(
-                {"message": 'Missing "type" parameter. Please specify "student" or "organization".'},
+                {"message": 'Provide at least "query", "faculty", or "department".'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if search_type == 'student':
-            if not faculty and not department and not query:
-                return Response(
-                    {"message": 'For search type "student", provide "faculty", "department", or "query".'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        results = []
 
-            queryset = User.objects.filter(student__isnull=False)
+        # Search Students
+        student_qs = Student.objects.all()
+        if query:
+            student_qs = student_qs.filter(name__icontains=query)
+        if faculty:
+            student_qs = student_qs.filter(faculty__icontains=faculty)
+        if department:
+            student_qs = student_qs.filter(department__icontains=department)
 
-            if faculty:
-                queryset = queryset.filter(student__faculty__icontains=faculty)
-            if department:
-                queryset = queryset.filter(student__department__icontains=department)
-            if query:
-                queryset = queryset.filter(student__name__icontains=query)
+        for student in student_qs.select_related('user'):
+            results.append({
+                'type': 'student',
+                'email': student.user.email,
+                'faculty': student.faculty,
+                'department': student.department,
+                'name': student.name,
+                'display_name_slug': student.display_name_slug
+            })
 
-            for user in queryset:
-                student = user.student
-                users_found.append({
-                    'email': user.email,
-                    'faculty': student.faculty,
-                    'department': student.department,
-                    'name': student.name,
-                    'display_name_slug': student.display_name_slug
-                })
+        # Search Organizations
+        org_qs = Organization.objects.all()
+        if query:
+            org_qs = org_qs.filter(organization_name__icontains=query)
 
-        elif search_type == 'organization':
-            queryset = User.objects.filter(organization__isnull=False)
+        for org in org_qs.select_related('user'):
+            results.append({
+                'type': 'organization',
+                'email': org.user.email,
+                'organization_name': org.organization_name,
+                'display_name_slug': org.display_name_slug,
+                'exclusive': org.exclusive,
+            })
 
-            if query:
-                queryset = queryset.filter(organization__organization_name__icontains=query)
-
-            for user in queryset:
-                org = user.organization
-                users_found.append({
-                    'email': user.email,
-                    'organization_name': org.organization_name,
-                    'display_name_slug': org.display_name_slug,
-                    'exclusive': org.exclusive,
-                })
-        else:
-            return Response(
-                {"message": 'Invalid "type" parameter. Must be "student" or "organization".'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        return Response(users_found, status=status.HTTP_200_OK)
+        # Apply pagination
+        paginator = UserSearchPagination()
+        paginated_results = paginator.paginate_queryset(results, request)
+        return paginator.get_paginated_response(paginated_results)
 
 class UserDeactivateView(generics.GenericAPIView):
     """ Deactivate a user account """
