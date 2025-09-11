@@ -566,6 +566,13 @@ class CommentCreateFirestoreView(APIView):
         serializer = FirestoreCommentSerializer(data=request.data)
         if serializer.is_valid():
             data = serializer.validated_data
+            parent_comment_id = data.get('parent_comment_id')
+
+            if parent_comment_id:
+                # Verify parent comment exists
+                parent_comment_ref = post_ref.collection('comments').document(parent_comment_id)
+                if not parent_comment_ref.get().exists:
+                    return Response({"error": "Parent comment not found"}, status=status.HTTP_400_BAD_REQUEST)
             
             comment_payload = {
                 'post_id': post_id, # Redundant if in subcollection, but useful for queries
@@ -574,6 +581,8 @@ class CommentCreateFirestoreView(APIView):
                 'text': data['text'],
                 'timestamp': firestore.SERVER_TIMESTAMP,
                 # Add other fields like parent_comment_id for replies, etc.
+                'parent_comment_id': parent_comment_id if parent_comment_id else None,
+                'reply_count': 0 if not parent_comment_id else None, # Only top-level comments track reply_count
             }
 
             try:
@@ -605,6 +614,12 @@ class CommentCreateFirestoreView(APIView):
                     transaction.update(current_post_ref, {
                         'comment_count': firestore.Increment(1)
                     })
+
+                    if 'parent_comment_id' in payload and payload['parent_comment_id']:
+                        parent_comment_ref = current_post_ref.collection('comments').document(payload['parent_comment_id'])
+                        transaction.update(parent_comment_ref, {
+                            'reply_count': firestore.Increment(1)
+                        })
                     
                     return new_comment_ref.id # Return the ID of the newly created comment
 
@@ -612,41 +627,60 @@ class CommentCreateFirestoreView(APIView):
                 # It's called like a regular function, and db.transaction() is implicitly passed.
                 # db.transaction() will retry the function automatically on contention.
                 new_comment_id = create_comment_and_increment_count(db.transaction(), post_ref, comment_payload)
+
+
+
+                # Fetch the parent's author for notification if it's a reply
+                target_user = None
+                notification_title = ""
                 
-                # After successful transaction, fetch the created comment data for response
+                if parent_comment_id:
+                    # Case 1: Reply to a comment
+                    parent_comment_doc = post_ref.collection('comments').document(parent_comment_id).get()
+                    if parent_comment_doc.exists:
+                        parent_author_id = parent_comment_doc.to_dict().get('author_id')
+                        if parent_author_id and parent_author_id != str(request.user.id):
+                            target_user = User.objects.get(id=parent_author_id)
+                            notification_title = "New Reply"
+                    
+                else:
+                    # Case 2: New comment on a post
+                    post_author_id = post_doc_snapshot.to_dict().get('author_id')
+                    if post_author_id and post_author_id != str(request.user.id):
+                        target_user = User.objects.get(id=post_author_id)
+                        notification_title = "New Comment on Your Post"
+                
+                # Send the push notification if a target user was found
+                if target_user:
+                    send_push_notification(
+                        user=target_user,
+                        title=notification_title,
+                        body=f"{user_name} commented: {comment_payload['text'][:50]}...",
+                        data={
+                            "type": "comment" if not parent_comment_id else "reply",
+                            "post_id": post_id,
+                            "comment_id": new_comment_id,
+                            "commenter_id": user_id,
+                        }
+                    )
+                
                 created_comment_doc = post_ref.collection('comments').document(new_comment_id).get()
                 created_comment_data = created_comment_doc.to_dict()
                 created_comment_data['id'] = new_comment_id
-
-                post_author_id = post_doc_snapshot.to_dict().get('author_id')
-                
-                # Check if the post author exists and is not the commenter
-                if post_author_id and post_author_id != str(request.user.id):
-                    try:
-                        post_author = User.objects.get(id=post_author_id)
-                        # Send push notification to the post author about the new comment
-                        send_push_notification(
-                            user=post_author,
-                            title="New Comment on Your Post",
-                            body=f"{user_name} commented: {comment_payload['text'][:50]}...",
-                            data={
-                                "type": "comment",
-                                "post_id": post_id,
-                                "comment_id": new_comment_id,
-                                "commenter_id": user_id # The ID of the person who commented
-                            }
-                        )
-                    except User.DoesNotExist:
-                        pass
                 
                 return Response(created_comment_data, status=status.HTTP_201_CREATED)
 
-            except ValueError as ve: # Catch explicit errors from inside the transaction function
+            except User.DoesNotExist:
+                logger.warning("Notification target user not found.")
+                # We can continue since the comment was still created successfully
+                return Response(created_comment_data, status=status.HTTP_201_CREATED)
+            except ValueError as ve:
+                logger.error(f"Transaction failed: {str(ve)}")
                 return Response({"error": f"Transaction failed: {str(ve)}"}, status=status.HTTP_400_BAD_REQUEST)
             except Exception as e:
-                # Catch any other Firestore errors or general exceptions
-                # print(f"Error creating comment with transaction: {e}") # Log the full error for debugging
+                logger.error(f"Error creating comment: {e}", exc_info=True)
                 return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -685,20 +719,55 @@ class CommentDetailFirestoreView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, post_id, comment_id):
-        comment_ref = self.get_comment_ref(post_id, comment_id)
-        comment_doc = comment_ref.get()
-        if not comment_doc.exists:
-            return Response({"error": "Comment not found"}, status=status.HTTP_404_NOT_FOUND)
-        comment_data = comment_doc.to_dict()
-        if comment_data.get('author_id') != str(request.user.id):
-            return Response({"error": "You do not have permission to delete this comment."}, status=status.HTTP_403_FORBIDDEN)
-        try:
-            comment_ref.delete()
-            # Optionally decrement comment_count on the post
-            db.collection('posts').document(post_id).update({
+        # Use a transaction to ensure atomic updates
+        @firestore.transactional
+        def delete_comment_and_decrement_counts(transaction, post_ref, comment_ref):
+            comment_doc = comment_ref.get(transaction=transaction)
+            if not comment_doc.exists:
+                raise ValueError("Comment not found during transaction.")
+
+            comment_data = comment_doc.to_dict()
+            if comment_data.get('author_id') != str(request.user.id):
+                # The transaction will be rolled back and an exception raised
+                raise PermissionError("You do not have permission to delete this comment.")
+            
+            # Delete the comment
+            transaction.delete(comment_ref)
+
+            # Decrement comment_count on the post
+            transaction.update(post_ref, {
                 'comment_count': firestore.Increment(-1)
             })
+
+            # Check if it was a reply and decrement the parent's reply_count
+            parent_comment_id = comment_data.get('parent_comment_id')
+            if parent_comment_id:
+                parent_comment_ref = post_ref.collection('comments').document(parent_comment_id)
+                transaction.update(parent_comment_ref, {
+                    'reply_count': firestore.Increment(-1)
+                })
+            
+            # If the deleted comment was a top-level comment, also find and delete its replies
+            # This is critical for data integrity!
+            if not parent_comment_id:
+                replies_query = post_ref.collection('comments').where('parent_comment_id', '==', comment_id).stream()
+                for reply_doc in replies_query:
+                    transaction.delete(reply_doc.reference)
+                    # We don't need to decrement post's count for these since they are
+                    # already covered by the top-level comment's count.
+
+        try:
+            post_ref = db.collection('posts').document(post_id)
+            comment_ref = self.get_comment_ref(post_id, comment_id)
+            
+            delete_comment_and_decrement_counts(db.transaction(), post_ref, comment_ref)
+            
             return Response(status=status.HTTP_204_NO_CONTENT)
+
+        except PermissionError as pe:
+            return Response({"error": str(pe)}, status=status.HTTP_403_FORBIDDEN)
+        except ValueError as ve:
+            return Response({"error": str(ve)}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -717,36 +786,24 @@ class CommentListFirestoreView(APIView):
             return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
 
         try:
-            # --- Pagination params ---
-            page_size = int(request.query_params.get("page_size", 10))
-            start_after_id = request.query_params.get("start_after")
-
+            # Step 1: Fetch ALL comments for the post.
             comments_ref = post_ref.collection('comments').order_by('timestamp', direction=firestore.Query.DESCENDING)
+            docs = comments_ref.stream()
 
-            if start_after_id:
-                start_after_doc = post_ref.collection('comments').document(start_after_id).get()
-                if start_after_doc.exists:
-                    comments_ref = comments_ref.start_after(start_after_doc)
-                else:
-                    return Response({"error": "Invalid start_after ID"}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Apply limit
-            docs = comments_ref.limit(page_size).stream()
-
-            comments_list = []
+            comments_by_id = {}
             author_ids = set()
-            last_doc_id = None
 
+            # Step 2: Organize comments into a dictionary and gather author IDs.
             for doc in docs:
                 comment_data = doc.to_dict()
                 comment_data['id'] = doc.id
-                comments_list.append(comment_data)
-                last_doc_id = doc.id
-
+                comment_data['replies'] = [] # Initialize a list for replies
+                comments_by_id[doc.id] = comment_data
+                
                 if 'author_id' in comment_data:
                     author_ids.add(str(comment_data['author_id']))
 
-            # Hydrate authors
+            # Step 3: Hydrate authors from Postgres in a single query.
             authors_map = {}
             if author_ids:
                 authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
@@ -765,7 +822,7 @@ class CommentListFirestoreView(APIView):
                         exclusive = getattr(author.organization, 'exclusive', False)
 
                     authors_map[str(author.id)] = {
-                        "id": author.id,
+                        "id": str(author.id),
                         "name": author_name,
                         "display_name_slug": display_name_slug,
                         "profile_pic_url": author.profile_pic_url,
@@ -775,15 +832,40 @@ class CommentListFirestoreView(APIView):
                         "department": department if hasattr(author, 'student') else None,
                     }
 
-            serializer = FirestoreCommentSerializer(comments_list, many=True, context={'authors_map': authors_map})
+            # Step 4: Build the nested comment/reply structure.
+            top_level_comments = []
+            for comment_id, comment_data in comments_by_id.items():
+                parent_id = comment_data.get('parent_comment_id')
+                if parent_id and parent_id in comments_by_id:
+                    # This is a reply, so add it to its parent's replies list.
+                    comments_by_id[parent_id]['replies'].append(comment_data)
+                else:
+                    # This is a top-level comment.
+                    top_level_comments.append(comment_data)
+            
+            # Step 5: Sort replies by timestamp for correct ordering
+            for comment in comments_by_id.values():
+                comment['replies'].sort(key=lambda x: x.get('timestamp'), reverse=True)
 
+            # Step 6: Paginate the top-level comments in memory.
+            page_size = int(request.query_params.get("page_size", 10))
+            page_number = int(request.query_params.get("page", 1))
+            start_index = (page_number - 1) * page_size
+            end_index = start_index + page_size
+            paginated_comments = top_level_comments[start_index:end_index]
+            
+            # Step 7: Serialize the paginated data.
+            serializer = FirestoreCommentSerializer(paginated_comments, many=True, context={'authors_map': authors_map})
+            
             return Response({
                 "results": serializer.data,
-                "next_cursor": last_doc_id if len(comments_list) == page_size else None
+                "next_page": page_number + 1 if end_index < len(top_level_comments) else None,
+                "total_comments": len(top_level_comments),
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"error": f"Failed to retrieve comments: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
 
