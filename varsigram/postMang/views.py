@@ -229,9 +229,9 @@ class FeedView(APIView):
                 following_user_ids = [str(uid) for uid in Student.objects.filter(id__in=following_student_ids).values_list('user_id', flat=True)]
                 following_org_ids = [str(uid) for uid in Organization.objects.filter(id__in=following_org_ids).values_list('user_id', flat=True)]
             
-            print(f"Following user IDs: {following_user_ids}")
-            print(f"Following org IDs: {following_org_ids}")
-            print(f"Current user profile: {current_user_profile}")
+            # print(f"Following user IDs: {following_user_ids}")
+            # print(f"Following org IDs: {following_org_ids}")
+            # print(f"Current user profile: {current_user_profile}")
 
             # Get the correct ratios based on user type
             ratios = self.get_feed_ratios(current_user_profile)
@@ -246,7 +246,7 @@ class FeedView(APIView):
                     post_data['id'] = doc.id
                     followed_posts_candidates.append(post_data)
             
-            print(f"Followed posts candidates count: {len(followed_posts_candidates)}")
+            # print(f"Followed posts candidates count: {len(followed_posts_candidates)}")
 
             not_followed_relations_candidates = []
             shared_relations_users_ids = []
@@ -259,7 +259,7 @@ class FeedView(APIView):
                         Q(religion=current_user_profile.religion)
                     ).exclude(user__id__in=[int(uid) for uid in following_user_ids]).exclude(user=current_user).values_list('user_id', flat=True)
                 )
-                print(f"Shared relations user IDs before limit: {shared_relations_users_ids}")
+                # print(f"Shared relations user IDs before limit: {shared_relations_users_ids}")
                 for chunk in chunk_list([str(uid) for uid in shared_relations_users_ids]):
                     relations_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
                     for doc in relations_posts_query.stream():
@@ -267,7 +267,7 @@ class FeedView(APIView):
                         post_data['id'] = doc.id
                         not_followed_relations_candidates.append(post_data)
             
-            print(f"Not followed relations candidates count: {len(not_followed_relations_candidates)}")
+            # print(f"Not followed relations candidates count: {len(not_followed_relations_candidates)}")
 
             all_other_user_ids = list(
                 Student.objects.exclude(user__id__in=[int(uid) for uid in following_user_ids]).exclude(user__id__in=shared_relations_users_ids).exclude(user=current_user)
@@ -295,8 +295,8 @@ class FeedView(APIView):
                     post_data['id'] = doc.id
                     org_followed_candidates.append(post_data)
             
-            print(f"Org followed candidates count: {len(org_followed_candidates)}")
-            print(f"not_followed_no_relations_candidates count: {len(not_followed_no_relations_candidates)}")
+            # print(f"Org followed candidates count: {len(org_followed_candidates)}")
+            # print(f"not_followed_no_relations_candidates count: {len(not_followed_no_relations_candidates)}")
 
             non_exclusive_org_ids = list(Organization.objects.filter(exclusive=False).exclude(user__id__in=[int(uid) for uid in following_org_ids]).values_list('user_id', flat=True))
             org_not_exclusive_candidates = []
@@ -307,8 +307,8 @@ class FeedView(APIView):
                     post_data['id'] = doc.id
                     org_not_exclusive_candidates.append(post_data)
             
-            print(f"Shared relations user IDs: {shared_relations_users_ids}")
-            print(f"All other user IDs: {all_other_user_ids}")
+            # print(f"Shared relations user IDs: {shared_relations_users_ids}")
+            # print(f"All other user IDs: {all_other_user_ids}")
 
             
             logger.info(f"Followed posts: {len(followed_posts_candidates)}")
@@ -326,11 +326,11 @@ class FeedView(APIView):
             full_feed_list.extend(random.sample(org_not_exclusive_candidates, min(ratios['org_not_exclusive'], len(org_not_exclusive_candidates))))
             full_feed_list.extend(random.sample(org_followed_candidates, min(ratios['org_followed'], len(org_followed_candidates))))
 
-            print(f"Full feed list count before shuffle: {len(full_feed_list)}")
+            # print(f"Full feed list count before shuffle: {len(full_feed_list)}")
 
             random.shuffle(full_feed_list)
 
-            print(f"Full feed list count after shuffle: {len(full_feed_list)}")
+            # print(f"Full feed list count after shuffle: {len(full_feed_list)}")
 
 
 
@@ -340,7 +340,7 @@ class FeedView(APIView):
             
             paginated_posts = full_feed_list[start_index:end_index]
 
-            print(f"Paginated posts count before deduplication: {len(paginated_posts)}")
+            # print(f"Paginated posts count before deduplication: {len(paginated_posts)}")
             
             unique_paginated_posts = []
             seen_post_ids = set()
@@ -349,7 +349,7 @@ class FeedView(APIView):
                     unique_paginated_posts.append(post)
                     seen_post_ids.add(post.get('id'))
             
-            print(f"Paginated posts count after deduplication: {len(unique_paginated_posts)}")
+            # print(f"Paginated posts count after deduplication: {len(unique_paginated_posts)}")
 
             final_posts_for_response = []
             for post_data in unique_paginated_posts:
@@ -363,7 +363,7 @@ class FeedView(APIView):
                 post_data['has_liked'] = db.collection('posts').document(post_id).collection('likes').document(str(current_user.id)).get().exists
                 final_posts_for_response.append(post_data)
 
-            print(f"Final posts for response count: {len(final_posts_for_response)}")
+            # print(f"Final posts for response count: {len(final_posts_for_response)}")
 
             # --- 4. Hydrate Author Data and Serialize ---
             author_ids = set(str(post['author_id']) for post in final_posts_for_response if 'author_id' in post)

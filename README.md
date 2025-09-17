@@ -388,64 +388,6 @@ Most endpoints require authentication. Authentication is handled using token-bas
     *   Authentication: Required
     *   Response (204 No Content): On successful deletion.
 
-*   **`GET /posts/<str:post_id>/comments/`**  [name='post-comments']
-
-    *   Description: Retrieves comments for a specific post. Supports cursor-based pagination.
-    *   Request: `GET`
-    *   Authentication: Optional (some fields may depend on authentication)
-    *   Path Parameters:
-        *   `post_id`: The ID of the post whose comments you want to retrieve.
-    *   Query Parameters:
-        *   `page_size`: (optional, default: 10) Number of comments to return per page.
-        *   `start_after`: (optional) Firestore comment ID to start after (for pagination).
-    *   Response (200 OK): Returns a paginated list of comments for the post.
-        ```json
-        {
-            "results": [
-                {
-                    "id": "comment_id",
-                    "text": "Comment text",
-                    "author_id": "user_id",
-                    "timestamp": "2025-07-22T12:34:56Z",
-                    "profile_pic_url": "https://...",
-                    "display_name_slug": "user-slug",
-                    // ...other comment fields...
-                }
-            ],
-            "next_cursor": "next_comment_id"
-        }
-        ```
-    *   Response (200 OK, empty): If the post has no comments.
-        ```json
-        {
-            "results": [],
-            "next_cursor": null
-        }
-        ```
-    *   Response (404 Not Found): If the post does not exist.
-        ```json
-        {
-            "error": "Post not found"
-        }
-        ```
-    *   Response (500 Internal Server Error): If an error occurs.
-        ```json
-        {
-            "error": "Failed to retrieve comments: <error_message>"
-        }
-        ```
-
-*   **`POST /posts/<str:post_id>/comments/create/`**  [name='post-detail']
-
-    *   Adds a comment to a post.
-    *   Authentication: Required
-    *   Request Body (JSON):
-        ```json
-        {
-            "text": "Comment text"
-        }
-        ```
-    *   Response (201 Created): Returns the created comment.
 
 *   **`POST /posts/<str:post_id>/like/`**  [name='post-like']
 
@@ -524,70 +466,6 @@ Most endpoints require authentication. Authentication is handled using token-bas
 - If authenticated, the `has_liked`
 
 
-*   **`PUT /posts/{post_id}/comments/{comment_id}/`**  
-    *Edit a comment (author only)*
-
-    - **Description:** Update the content of a specific comment on a post. Only the comment's author can edit.
-    - **Authentication:** Required (JWT, verified user)
-    - **Path Parameters:**
-        - `post_id`: The ID of the post.
-        - `comment_id`: The ID of the comment to edit.
-    - **Request Body:**
-        ```json
-        {
-            "text": "Updated comment text"
-        }
-        ```
-    - **Response (200 OK):**
-        ```json
-        {
-            "id": "comment_id",
-            "text": "Updated comment text",
-            "author_id": "user_id",
-            "timestamp": "2025-07-22T12:34:56Z",
-            // ...other comment fields...
-        }
-        ```
-    - **Response (403 Forbidden):**
-        ```json
-        {
-            "error": "You do not have permission to edit this comment."
-        }
-        ```
-    - **Response (404 Not Found):**
-        ```json
-        {
-            "error": "Comment not found"
-        }
-        ```
-
-*   **`DELETE /posts/{post_id}/comments/{comment_id}/`**  
-    *Delete a comment (author only)*
-
-    - **Description:** Delete a specific comment on a post. Only the comment's author can delete.
-    - **Authentication:** Required (JWT, verified user)
-    - **Path Parameters:**
-        - `post_id`: The ID of the post.
-        - `comment_id`: The ID of the comment to delete.
-    - **Response (204 No Content):** Comment deleted successfully.
-    - **Response (403 Forbidden):**
-        ```json
-        {
-            "error": "You do not have permission to delete this comment."
-        }
-        ```
-    - **Response (404 Not Found):**
-        ```json
-        {
-            "error": "Comment not found"
-        }
-        ```
-
-**Notes:**
-- Only the author of the comment can edit or delete it.
-- Deleting a comment decrements the parent post's `comment_count`.
-- Editing supports partial updates (PATCH semantics via PUT).
-
 *   **`GET /official`**  [name='exclusive-orgs-recent-posts']
 
     *   Description: Retrieves recent posts from organizations marked as `exclusive=True`. Supports cursor-based pagination.
@@ -634,6 +512,114 @@ Most endpoints require authentication. Authentication is handled using token-bas
 - Only organizations with `exclusive=True` are included.
 - If authenticated, the `has_liked` field reflects whether the current user has liked each post.
 
+# Comments API Documentation
+
+---
+
+## Endpoints
+
+### 1. Create a Comment or Reply  
+`POST /api/posts/<post_id>/comments/create/`
+
+- **Description:**  
+  Create a new comment on a post, or reply to an existing comment.
+- **Authentication:**  
+  Required (JWT, verified user)
+- **Request Body:**
+    ```json
+    {
+      "text": "Your comment text",
+      "parent_comment_id": "optional_parent_comment_id" // Only for replies
+    }
+    ```
+- **Response (201 Created):**
+    ```json
+    {
+      "id": "comment_id",
+      "post_id": "post_id",
+      "author_id": "user_id",
+      "author_username": "user@example.com",
+      "text": "Your comment text",
+      "timestamp": "2025-09-17T12:34:56Z",
+      "parent_comment_id": "optional_parent_comment_id",
+      "reply_count": 0
+    }
+    ```
+- **Notes:**
+  - If `parent_comment_id` is provided, the comment is treated as a reply.
+  - Increments `comment_count` on the post and `reply_count` on the parent comment (for replies).
+  - Sends push notifications to post author or parent comment author.
+
+---
+
+### 2. List Comments  
+`GET /api/posts/<post_id>/comments/`
+
+- **Description:**  
+  List all comments and replies for a post, paginated.
+- **Authentication:**  
+  Optional
+- **Query Parameters:**  
+  - `page_size` (default: 10)
+  - `page` (default: 1)
+- **Response (200 OK):**
+    ```json
+    {
+      "results": [
+        {
+          "id": "comment_id",
+          "author_id": "user_id",
+          "text": "Comment text",
+          "timestamp": "...",
+          "reply_count": 2,
+          "replies": [ ...nested replies... ]
+        }
+        // ...
+      ],
+      "next_page": 2,
+      "total_comments": 15
+    }
+    ```
+- **Notes:**
+  - Returns paginated top-level comments with nested replies.
+  - Author info is hydrated from PostgreSQL.
+
+---
+
+### 3. Retrieve, Edit, or Delete a Comment  
+`GET /api/posts/<post_id>/comments/<comment_id>/`  
+`PUT /api/posts/<post_id>/comments/<comment_id>/`  
+`DELETE /api/posts/<post_id>/comments/<comment_id>/`
+
+- **Description:**  
+  Retrieve, update, or delete a specific comment.
+- **Authentication:**  
+  Required for edit/delete (JWT, verified user)
+- **Request Body (PUT):**
+    ```json
+    {
+      "text": "Updated comment text"
+    }
+    ```
+- **Response:**  
+  - `200 OK` for GET/PUT, `204 No Content` for DELETE.
+  - Error responses for unauthorized access or comment not found.
+- **Notes:**
+  - Only the comment author can edit or delete.
+  - Deleting a top-level comment also deletes its replies.
+  - Updates `comment_count` and `reply_count` as needed.
+
+---
+
+## General Notes
+
+- All comment endpoints use Firestore transactions for atomic updates.
+- Replies are stored as comments with a `parent_comment_id` field.
+- Author info is hydrated from PostgreSQL for richer responses.
+- Error responses are descriptive for missing resources or permissions.
+- Push notifications are sent for new comments and replies.
+
+---
 
 ### `GET /feed/` [name='feed-view']
 
