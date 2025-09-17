@@ -252,14 +252,15 @@ class FeedView(APIView):
                         Q(faculty=current_user_profile.faculty) | 
                         Q(department=current_user_profile.department) |
                         Q(religion=current_user_profile.religion)
-                    ).exclude(id__in=following_student_ids).exclude(user=current_user).values_list('user_id', flat=True)
+                    ).exclude(user__id=following_user_ids).exclude(user=current_user).values_list('user_id', flat=True)
                 )
+                print(f"Shared relations user IDs before limit: {shared_relations_users_ids}")
                 for chunk in chunk_list([str(uid) for uid in shared_relations_users_ids]):
                     relations_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
                     not_followed_relations_candidates.extend([doc.to_dict() for doc in relations_posts_query.stream()])
 
             all_other_user_ids = list(
-                Student.objects.exclude(id__in=following_student_ids).exclude(user__id=shared_relations_users_ids).exclude(user=current_user)
+                Student.objects.exclude(user__id=following_user_ids).exclude(user__id=shared_relations_users_ids).exclude(user=current_user)
                 .values_list('user_id', flat=True)
             )[:CANDIDATE_POOL_SIZE]
 
@@ -280,7 +281,7 @@ class FeedView(APIView):
                 org_followed_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
                 org_followed_candidates.extend([doc.to_dict() for doc in org_followed_query.stream()])
 
-            non_exclusive_org_ids = list(Organization.objects.filter(exclusive=False).exclude(user_id=following_org_ids).values_list('user_id', flat=True))
+            non_exclusive_org_ids = list(Organization.objects.filter(exclusive=False).exclude(user__id=following_org_ids).values_list('user_id', flat=True))
             org_not_exclusive_candidates = []
             for chunk in chunk_list([str(uid) for uid in non_exclusive_org_ids]):
                 org_not_exclusive_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
