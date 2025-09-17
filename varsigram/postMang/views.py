@@ -202,7 +202,7 @@ class FeedView(APIView):
                     follower_content_type=student_ct,
                     follower_object_id=current_user_profile.id
                 )
-                following_user_ids = set(
+                following_student_ids = set(
                     str(x) for x in follows.filter(followee_content_type=student_ct)
                     .values_list('followee_object_id', flat=True)
                 )
@@ -210,13 +210,15 @@ class FeedView(APIView):
                     str(x) for x in follows.filter(followee_content_type=org_ct)
                     .values_list('followee_object_id', flat=True)
                 )
+                following_user_ids = [str(uid) for uid in Student.objects.filter(id__in=following_student_ids).values_list('user_id', flat=True)]
+                following_org_ids = [str(uid) for uid in Organization.objects.filter(id__in=following_org_ids).values_list('user_id', flat=True)]
             elif hasattr(current_user, 'organization'):
                 current_user_profile = current_user.organization
                 follows = Follow.objects.filter(
                     follower_content_type=org_ct,
                     follower_object_id=current_user_profile.id
                 )
-                following_user_ids = set(
+                following_student_ids = set(
                     str(x) for x in follows.filter(followee_content_type=student_ct)
                     .values_list('followee_object_id', flat=True)
                 )
@@ -224,6 +226,8 @@ class FeedView(APIView):
                     str(x) for x in follows.filter(followee_content_type=org_ct)
                     .values_list('followee_object_id', flat=True)
                 )
+                following_user_ids = [str(uid) for uid in Student.objects.filter(id__in=following_student_ids).values_list('user_id', flat=True)]
+                following_org_ids = [str(uid) for uid in Organization.objects.filter(id__in=following_org_ids).values_list('user_id', flat=True)]
             
             print(f"Following user IDs: {following_user_ids}")
             print(f"Following org IDs: {following_org_ids}")
@@ -235,7 +239,7 @@ class FeedView(APIView):
             
             # --- Fetch a Large Pool of Candidate Posts for Randomization ---
             followed_posts_candidates = []
-            for chunk in chunk_list([str(uid) for uid in following_user_ids]):
+            for chunk in chunk_list(following_user_ids):
                 followed_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
                 followed_posts_candidates.extend([doc.to_dict() for doc in followed_posts_query.stream()])
 
@@ -248,15 +252,15 @@ class FeedView(APIView):
                         Q(faculty=current_user_profile.faculty) | 
                         Q(department=current_user_profile.department) |
                         Q(religion=current_user_profile.religion)
-                    ).exclude(id__in=following_user_ids).exclude(user=current_user).values_list('id', flat=True)
+                    ).exclude(id__in=following_student_ids).exclude(user=current_user).values_list('user_id', flat=True)
                 )
                 for chunk in chunk_list([str(uid) for uid in shared_relations_users_ids]):
                     relations_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
                     not_followed_relations_candidates.extend([doc.to_dict() for doc in relations_posts_query.stream()])
 
             all_other_user_ids = list(
-                Student.objects.exclude(id__in=following_user_ids).exclude(id__in=shared_relations_users_ids).exclude(user=current_user)
-                .values_list('id', flat=True)
+                Student.objects.exclude(id__in=following_student_ids).exclude(user__id=shared_relations_users_ids).exclude(user=current_user)
+                .values_list('user_id', flat=True)
             )[:CANDIDATE_POOL_SIZE]
 
             # Build a set of author IDs from not_followed_relations_candidates for filtering
@@ -272,15 +276,19 @@ class FeedView(APIView):
                         not_followed_no_relations_candidates.append(post_data)
 
             org_followed_candidates = []
-            for chunk in chunk_list([str(uid) for uid in following_org_ids]):
+            for chunk in chunk_list(following_org_ids):
                 org_followed_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
                 org_followed_candidates.extend([doc.to_dict() for doc in org_followed_query.stream()])
 
-            non_exclusive_org_ids = list(Organization.objects.filter(exclusive=False).exclude(id__in=following_org_ids).values_list('id', flat=True))
+            non_exclusive_org_ids = list(Organization.objects.filter(exclusive=False).exclude(user_id=following_org_ids).values_list('user_id', flat=True))
             org_not_exclusive_candidates = []
             for chunk in chunk_list([str(uid) for uid in non_exclusive_org_ids]):
                 org_not_exclusive_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
                 org_not_exclusive_candidates.extend([doc.to_dict() for doc in org_not_exclusive_query.stream()])
+            
+            print(f"Shared relations user IDs: {shared_relations_users_ids}")
+            print(f"All other user IDs: {all_other_user_ids}")
+
             
             logger.info(f"Followed posts: {len(followed_posts_candidates)}")
             logger.info(f"Not followed (relations): {len(not_followed_relations_candidates)}")
