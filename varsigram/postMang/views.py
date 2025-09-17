@@ -224,6 +224,10 @@ class FeedView(APIView):
                     str(x) for x in follows.filter(followee_content_type=org_ct)
                     .values_list('followee_object_id', flat=True)
                 )
+            
+            print(f"Following user IDs: {following_user_ids}")
+            print(f"Following org IDs: {following_org_ids}")
+            print(f"Current user profile: {current_user_profile}")
 
             # Get the correct ratios based on user type
             ratios = self.get_feed_ratios(current_user_profile)
