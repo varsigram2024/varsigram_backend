@@ -189,26 +189,40 @@ class FeedView(APIView):
             following_user_ids = []
             following_org_ids = []
             
-            try:
-                if hasattr(current_user, 'student'):
-                    current_user_profile = current_user.student
-                    following_user_ids = list(current_user_profile.following_students.values_list('user_id', flat=True))
-                    following_org_ids = list(current_user_profile.following_organizations.values_list('user_id', flat=True))
-                elif hasattr(current_user, 'organization'):
-                    current_user_profile = current_user.organization
-                    following_user_ids = list(current_user_profile.following_students.values_list('user_id', flat=True))
-                    following_org_ids = list(current_user_profile.following_organizations.values_list('user_id', flat=True))
-            except (Student.DoesNotExist, Organization.DoesNotExist) as e:
-                logger.error(f"User profile does not exist: {e}")
-                # Fallback to empty lists if profile not found
-                pass
+            student_ct = ContentType.objects.get_for_model(Student)
+            org_ct = ContentType.objects.get_for_model(Organization)
+
+            if hasattr(current_user, 'student'):
+                current_user_profile = current_user.student
+                follows = Follow.objects.filter(
+                    follower_content_type=student_ct,
+                    follower_object_id=current_user_profile.id
+                )
+                following_user_ids = list(
+                    follows.filter(followee_content_type=student_ct)
+                    .values_list('followee_object_id', flat=True)
+                )
+                following_org_ids = list(
+                    follows.filter(followee_content_type=org_ct)
+                    .values_list('followee_object_id', flat=True)
+                )
+            elif hasattr(current_user, 'organization'):
+                current_user_profile = current_user.organization
+                follows = Follow.objects.filter(
+                    follower_content_type=org_ct,
+                    follower_object_id=current_user_profile.id
+                )
+                following_user_ids = list(
+                    follows.filter(followee_content_type=student_ct)
+                    .values_list('followee_object_id', flat=True)
+                )
+                following_org_ids = list(
+                    follows.filter(followee_content_type=org_ct)
+                    .values_list('followee_object_id', flat=True)
+                )
 
             # Get the correct ratios based on user type
             ratios = self.get_feed_ratios(current_user_profile)
-
-            following_user_ids = list(current_user.following_students.values_list('user_id', flat=True))
-            following_org_ids = list(current_user.following_organizations.values_list('user_id', flat=True))
-
             CANDIDATE_POOL_SIZE = 100 
             
             # --- Fetch a Large Pool of Candidate Posts for Randomization ---
