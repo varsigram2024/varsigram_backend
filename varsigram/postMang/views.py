@@ -313,13 +313,21 @@ class FeedView(APIView):
             full_feed_list.extend(random.sample(org_not_exclusive_candidates, min(ratios['org_not_exclusive'], len(org_not_exclusive_candidates))))
             full_feed_list.extend(random.sample(org_followed_candidates, min(ratios['org_followed'], len(org_followed_candidates))))
 
+            print(f"Full feed list count before shuffle: {len(full_feed_list)}")
+
             random.shuffle(full_feed_list)
+
+            print(f"Full feed list count after shuffle: {len(full_feed_list)}")
+
+
 
             # --- 3. Paginate the Final List ---
             start_index = (page - 1) * page_size
             end_index = start_index + page_size
             
             paginated_posts = full_feed_list[start_index:end_index]
+
+            print(f"Paginated posts count before deduplication: {len(paginated_posts)}")
             
             unique_paginated_posts = []
             seen_post_ids = set()
@@ -327,6 +335,8 @@ class FeedView(APIView):
                 if post.get('id') not in seen_post_ids:
                     unique_paginated_posts.append(post)
                     seen_post_ids.add(post.get('id'))
+            
+            print(f"Paginated posts count after deduplication: {len(unique_paginated_posts)}")
 
             final_posts_for_response = []
             for post_data in unique_paginated_posts:
@@ -339,6 +349,8 @@ class FeedView(APIView):
                 post_data['like_count'] = post_doc.to_dict().get('like_count', 0) if post_doc.exists else 0
                 post_data['has_liked'] = db.collection('posts').document(post_id).collection('likes').document(str(current_user.id)).get().exists
                 final_posts_for_response.append(post_data)
+
+            print(f"Final posts for response count: {len(final_posts_for_response)}")
 
             # --- 4. Hydrate Author Data and Serialize ---
             author_ids = set(str(post['author_id']) for post in final_posts_for_response if 'author_id' in post)
