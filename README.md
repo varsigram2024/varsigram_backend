@@ -588,62 +588,6 @@ Most endpoints require authentication. Authentication is handled using token-bas
 - Deleting a comment decrements the parent post's `comment_count`.
 - Editing supports partial updates (PATCH semantics via PUT).
 
-*   **`GET /feed/`**  [name='feed']
-
-    *   Description: Retrieves the main feed of posts by students, ordered by `trending_score` (descending) and then by `timestamp` (descending). Supports cursor-based pagination.
-    *   Request: `GET`
-    *   Authentication: Required (JWT)
-    *   Query Parameters:
-        *   `page_size`: (optional, default: 30) Number of posts to return per page.
-        *   `start_after_score`: (optional) The `trending_score` of the last post from the previous page (for cursor-based pagination).
-        *   `start_after_timestamp`: (optional) The `timestamp` of the last post from the previous page (for cursor-based pagination).
-    *   Response (200 OK): Returns a paginated list of student posts.
-        ```json
-        {
-            "results": [
-                {
-                    "id": "post_id",
-                    "content": "Post content",
-                    "timestamp": "2025-07-22T12:34:56Z",
-                    "author_id": "student_user_id",
-                    "trending_score": 42.5,
-                    "has_liked": false,
-                    "media_urls": [],
-                    // ...other post fields...
-                }
-            ],
-            "next_cursor": {
-                "trending_score": 42.5,
-                "timestamp": "2025-07-22T12:34:56Z"
-            }
-        }
-        ```
-    *   Response (200 OK, empty): If no posts are found.
-        ```json
-        {
-            "results": [],
-            "next_cursor": null
-        }
-        ```
-    *   Response (500 Internal Server Error): If an error occurs.
-        ```json
-        {
-            "error": "Failed to retrieve feed posts: <error_message>"
-        }
-        ```
-
-**Notes:**
-- The endpoint returns posts sorted by `trending_score` and then by `timestamp`, most recent and trending first.
-- Pagination is handled via the `start_after_score` and `start_after_timestamp` query parameters, and the `next_cursor` in the response.
-- Each post includes hydrated author information in the response context.
-- The `has_liked` field reflects whether the current user has
-<!-- 
-*   **`GET /trending/`**  [name='trending-posts']
-
-    *   Retrieves trending posts (based on likes, shares, or other criteria).
-    *   Request: GET
-    *   Response (200 OK): Returns a list of trending posts. -->
-
 *   **`GET /official`**  [name='exclusive-orgs-recent-posts']
 
     *   Description: Retrieves recent posts from organizations marked as `exclusive=True`. Supports cursor-based pagination.
@@ -689,6 +633,122 @@ Most endpoints require authentication. Authentication is handled using token-bas
 - Each post includes hydrated author information in the response context.
 - Only organizations with `exclusive=True` are included.
 - If authenticated, the `has_liked` field reflects whether the current user has liked each post.
+
+
+### `GET /feed/` [name='feed-view']
+
+- **Description:**  
+  Returns a randomized, paginated feed of posts for the authenticated user.  
+  The feed is dynamically weighted based on the user's profile type (Student or Organization) and includes posts from followed users, organizations, and other relevant categories.
+
+- **Request:**  
+  `GET /feed/`
+
+- **Authentication:**  
+  Required (JWT)
+
+- **Query Parameters:**
+  - `page`: (optional, default: 1) The page number for pagination.
+  - `page_size`: (optional, default: 10) Number of posts per page.
+  - `session_id`: (optional) A unique string to ensure consistent feed order for a session. If not provided, a new session ID is generated.
+
+- **Response (200 OK):**
+    ```json
+    {
+      "results": [
+        {
+          "id": "post_id_123",
+          "author_id": "user_id_456",
+          "author_name": "John Doe",
+          "author_profile_pic_url": "https://...",
+          "is_verified": true,
+          "exclusive": false,
+          "faculty": "Science",
+          "department": "Mathematics",
+          "display_name_slug": "john-doe-1",
+          "content": "Post content here...",
+          "timestamp": "2025-09-17T12:34:56Z",
+          "media_urls": [],
+          "view_count": 42,
+          "like_count": 5,
+          "has_liked": false
+        }
+        // ...more posts
+      ],
+      "session_id": "abc123-session-id",
+      "page": 1,
+      "page_size": 10,
+      "has_next": true
+    }
+    ```
+
+- **Response (400/500):**
+    ```json
+    {
+      "error": "Failed to retrieve feed posts: <error message>"
+    }
+    ```
+
+**Notes:**
+- The feed is shuffled and weighted per user type for diversity.
+- `view_count` is incremented only when the frontend calls the batch view endpoint for posts actually seen.
+- `like_count` and `has_liked` are included for each post.
+- Use the returned `session_id` for consistent pagination within a session.
+- `has_next` indicates if more pages are available.
+
+
+### `POST /api/posts/batch_view/` [name='batch-post-view-increment']
+
+- **Description:**  
+  Increments the view count for multiple posts in a single request.  
+  This endpoint is intended to be called by the frontend when posts actually appear in the user's viewport (e.g., detected via Intersection Observer).
+
+- **Request:**  
+  `POST /api/posts/batch_view/`
+
+- **Authentication:**  
+  Required (JWT)
+
+- **Request Body:**
+    ```json
+    {
+      "post_ids": ["post_id_1", "post_id_2", "post_id_3"]
+    }
+    ```
+
+- **Response (200 OK):**
+    ```json
+    {
+      "message": "3 post view counts incremented successfully."
+    }
+    ```
+
+- **Response (400 Bad Request):**
+    ```json
+    {
+      "error": "A list of post_ids is required."
+    }
+    ```
+
+- **Response (500 Internal Server Error):**
+    ```json
+    {
+      "error": "Failed to increment view count: <error message>"
+    }
+    ```
+
+**Notes:**
+- Only unique post IDs are processed per request.
+- Use this endpoint to increment views only for posts that are actually seen by the user.
+- This does not affect like
+
+<!-- 
+*   **`GET /trending/`**  [name='trending-posts']
+
+    *   Retrieves trending posts (based on likes, shares, or other criteria).
+    *   Request: GET
+    *   Response (200 OK): Returns a list of trending posts. -->
+
 
 ### Following & Followers
 
