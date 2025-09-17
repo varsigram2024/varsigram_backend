@@ -241,7 +241,10 @@ class FeedView(APIView):
             followed_posts_candidates = []
             for chunk in chunk_list(following_user_ids):
                 followed_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
-                followed_posts_candidates.extend([doc.to_dict() for doc in followed_posts_query.stream()])
+                for doc in followed_posts_query.stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    followed_posts_candidates.append(post_data)
             
             print(f"Followed posts candidates count: {len(followed_posts_candidates)}")
 
@@ -259,7 +262,10 @@ class FeedView(APIView):
                 print(f"Shared relations user IDs before limit: {shared_relations_users_ids}")
                 for chunk in chunk_list([str(uid) for uid in shared_relations_users_ids]):
                     relations_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
-                    not_followed_relations_candidates.extend([doc.to_dict() for doc in relations_posts_query.stream()])
+                    for doc in relations_posts_query.stream():
+                        post_data = doc.to_dict()
+                        post_data['id'] = doc.id
+                        not_followed_relations_candidates.append(post_data)
             
             print(f"Not followed relations candidates count: {len(not_followed_relations_candidates)}")
 
@@ -276,6 +282,7 @@ class FeedView(APIView):
                 other_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
                 for doc in other_posts_query.stream():
                     post_data = doc.to_dict()
+                    post_data['id'] = doc.id
                     author_id = post_data.get('author_id')
                     if author_id not in not_followed_rel_author_ids and author_id not in [str(uid) for uid in following_user_ids]:
                         not_followed_no_relations_candidates.append(post_data)
@@ -283,7 +290,10 @@ class FeedView(APIView):
             org_followed_candidates = []
             for chunk in chunk_list(following_org_ids):
                 org_followed_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
-                org_followed_candidates.extend([doc.to_dict() for doc in org_followed_query.stream()])
+                for doc in org_followed_query.stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    org_followed_candidates.append(post_data)
             
             print(f"Org followed candidates count: {len(org_followed_candidates)}")
             print(f"not_followed_no_relations_candidates count: {len(not_followed_no_relations_candidates)}")
@@ -292,7 +302,10 @@ class FeedView(APIView):
             org_not_exclusive_candidates = []
             for chunk in chunk_list([str(uid) for uid in non_exclusive_org_ids]):
                 org_not_exclusive_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
-                org_not_exclusive_candidates.extend([doc.to_dict() for doc in org_not_exclusive_query.stream()])
+                for doc in org_not_exclusive_query.stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    org_not_exclusive_candidates.append(post_data)
             
             print(f"Shared relations user IDs: {shared_relations_users_ids}")
             print(f"All other user IDs: {all_other_user_ids}")
