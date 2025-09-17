@@ -233,12 +233,13 @@ class FeedView(APIView):
 
             not_followed_relations_candidates = []
             if isinstance(current_user_profile, Student):
+                exclude_ids = set(following_user_ids) | {current_user.id}
                 shared_relations_users_ids = list(
                     Student.objects.filter(
                         Q(faculty=current_user_profile.faculty) | 
                         Q(department=current_user_profile.department) |
                         Q(religion=current_user_profile.religion)
-                    ).exclude(user_id__in=following_user_ids | {current_user.id}).values_list('user_id', flat=True)
+                    ).exclude(user_id__in=list(exclude_ids)).values_list('user_id', flat=True)
                 )
 
                 if shared_relations_users_ids:
@@ -246,7 +247,7 @@ class FeedView(APIView):
                     not_followed_relations_candidates = [doc.to_dict() for doc in relations_posts_query.stream()]
 
             all_other_user_ids = list(
-                Student.objects.exclude(user_id__in=following_user_ids | set(relations_posts_query) | {current_user.id})
+                Student.objects.exclude(user_id__in=list(set(following_user_ids) | set(relations_posts_query) | {current_user.id}))
                 .values_list('user_id', flat=True)
             )[:CANDIDATE_POOL_SIZE]
 
