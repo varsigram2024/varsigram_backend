@@ -277,6 +277,12 @@ class FeedView(APIView):
             for chunk in chunk_list([str(uid) for uid in non_exclusive_org_ids]):
                 org_not_exclusive_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
                 org_not_exclusive_candidates.extend([doc.to_dict() for doc in org_not_exclusive_query.stream()])
+            
+            logger.info(f"Followed posts: {len(followed_posts_candidates)}")
+            logger.info(f"Not followed (relations): {len(not_followed_relations_candidates)}")
+            logger.info(f"Not followed (no relations): {len(not_followed_no_relations_candidates)}")
+            logger.info(f"Org followed: {len(org_followed_candidates)}")
+            logger.info(f"Org not exclusive: {len(org_not_exclusive_candidates)}")
 
             # --- 2. Build the Final Randomized, Un-Paginated Feed using dynamic ratios ---
             full_feed_list = []
