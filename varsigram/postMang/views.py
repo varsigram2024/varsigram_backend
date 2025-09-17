@@ -142,6 +142,10 @@ class ListFollowingView(generics.ListAPIView):
         )
 logger = logging.getLogger(__name__)
 
+def chunk_list(lst, chunk_size=10):
+    for i in range(0, len(lst), chunk_size):
+        yield lst[i:i + chunk_size]
+
 class FeedView(APIView):
     """
     Generates a randomized, paginated, and category-based feed with dynamic weighting
@@ -227,11 +231,12 @@ class FeedView(APIView):
             
             # --- Fetch a Large Pool of Candidate Posts for Randomization ---
             followed_posts_candidates = []
-            if following_user_ids:
-                followed_posts_query = db.collection('posts').where('author_id', 'in', following_user_ids).limit(CANDIDATE_POOL_SIZE)
-                followed_posts_candidates = [doc.to_dict() for doc in followed_posts_query.stream()]
+            for chunk in chunk_list([str(uid) for uid in following_user_ids]):
+                followed_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
+                followed_posts_candidates.extend([doc.to_dict() for doc in followed_posts_query.stream()])
 
             not_followed_relations_candidates = []
+            shared_relations_users_ids = []
             if isinstance(current_user_profile, Student):
                 exclude_ids = set(following_user_ids) | {current_user.id}
                 shared_relations_users_ids = list(
@@ -241,35 +246,37 @@ class FeedView(APIView):
                         Q(religion=current_user_profile.religion)
                     ).exclude(user_id__in=list(exclude_ids)).values_list('user_id', flat=True)
                 )
-
-                if shared_relations_users_ids:
-                    relations_posts_query = db.collection('posts').where('author_id', 'in', shared_relations_users_ids).limit(CANDIDATE_POOL_SIZE)
-                    not_followed_relations_candidates = [doc.to_dict() for doc in relations_posts_query.stream()]
+                for chunk in chunk_list([str(uid) for uid in shared_relations_users_ids]):
+                    relations_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
+                    not_followed_relations_candidates.extend([doc.to_dict() for doc in relations_posts_query.stream()])
 
             all_other_user_ids = list(
-                Student.objects.exclude(user_id__in=list(set(following_user_ids) | set(relations_posts_query) | {current_user.id}))
+                Student.objects.exclude(user_id__in=list(set(following_user_ids) | set(shared_relations_users_ids) | {current_user.id}))
                 .values_list('user_id', flat=True)
             )[:CANDIDATE_POOL_SIZE]
 
+            # Build a set of author IDs from not_followed_relations_candidates for filtering
+            not_followed_rel_author_ids = set(post.get('author_id') for post in not_followed_relations_candidates)
+
             not_followed_no_relations_candidates = []
-            if all_other_user_ids:
-                other_posts_query = db.collection('posts').where('author_id', 'in', all_other_user_ids).limit(CANDIDATE_POOL_SIZE)
+            for chunk in chunk_list([str(uid) for uid in all_other_user_ids]):
+                other_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
                 for doc in other_posts_query.stream():
                     post_data = doc.to_dict()
                     author_id = post_data.get('author_id')
-                    if author_id not in not_followed_relations_candidates and author_id not in following_user_ids:
-                         not_followed_no_relations_candidates.append(post_data)
+                    if author_id not in not_followed_rel_author_ids and author_id not in [str(uid) for uid in following_user_ids]:
+                        not_followed_no_relations_candidates.append(post_data)
 
             org_followed_candidates = []
-            if following_org_ids:
-                org_followed_query = db.collection('posts').where('author_id', 'in', following_org_ids).limit(CANDIDATE_POOL_SIZE)
-                org_followed_candidates = [doc.to_dict() for doc in org_followed_query.stream()]
+            for chunk in chunk_list([str(uid) for uid in following_org_ids]):
+                org_followed_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
+                org_followed_candidates.extend([doc.to_dict() for doc in org_followed_query.stream()])
 
             non_exclusive_org_ids = list(Organization.objects.filter(exclusive=False).exclude(user_id__in=following_org_ids).values_list('user_id', flat=True))
             org_not_exclusive_candidates = []
-            if non_exclusive_org_ids:
-                org_not_exclusive_query = db.collection('posts').where('author_id', 'in', non_exclusive_org_ids).limit(CANDIDATE_POOL_SIZE)
-                org_not_exclusive_candidates = [doc.to_dict() for doc in org_not_exclusive_query.stream()]
+            for chunk in chunk_list([str(uid) for uid in non_exclusive_org_ids]):
+                org_not_exclusive_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
+                org_not_exclusive_candidates.extend([doc.to_dict() for doc in org_not_exclusive_query.stream()])
 
             # --- 2. Build the Final Randomized, Un-Paginated Feed using dynamic ratios ---
             full_feed_list = []
