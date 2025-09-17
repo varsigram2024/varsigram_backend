@@ -185,13 +185,22 @@ class FeedView(APIView):
 
             current_user = request.user
             current_user_profile = None
+            # Corrected logic to get the profile and its following lists
+            following_user_ids = []
+            following_org_ids = []
+            
             try:
-                # Determine user type and get the appropriate profile
                 if hasattr(current_user, 'student'):
                     current_user_profile = current_user.student
+                    following_user_ids = list(current_user_profile.following_students.values_list('user_id', flat=True))
+                    following_org_ids = list(current_user_profile.following_organizations.values_list('user_id', flat=True))
                 elif hasattr(current_user, 'organization'):
                     current_user_profile = current_user.organization
-            except (Student.DoesNotExist, Organization.DoesNotExist):
+                    following_user_ids = list(current_user_profile.following_students.values_list('user_id', flat=True))
+                    following_org_ids = list(current_user_profile.following_organizations.values_list('user_id', flat=True))
+            except (Student.DoesNotExist, Organization.DoesNotExist) as e:
+                logger.error(f"User profile does not exist: {e}")
+                # Fallback to empty lists if profile not found
                 pass
 
             # Get the correct ratios based on user type
