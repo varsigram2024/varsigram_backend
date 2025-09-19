@@ -22,7 +22,7 @@ urlpatterns = [
     path('users/<str:user_id>/posts/', UserPostsFirestoreView.as_view(), name='user-posts'),
     # path('posts/search/', PostSearchView.as_view(), name='post-search'),
     path('feed/', FeedView.as_view(), name='feed'),
-    path('posts/batch_view/', BatchPostViewIncrementAPIView.as_view(), name='batch-view'),
+    path('posts/batch-view/', BatchPostViewIncrementAPIView.as_view(), name='batch-view'),
     path('official/', ExclusiveOrgsRecentPostsView.as_view(), name='official-orgs-recent-posts'),
     # Followers Route
     path('users/follow/', GenericFollowView.as_view(), name='follow-user'),
