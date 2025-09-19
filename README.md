@@ -683,14 +683,14 @@ Most endpoints require authentication. Authentication is handled using token-bas
 - `has_next` indicates if more pages are available.
 
 
-### `POST /api/posts/batch-view/` [name='batch-post-view-increment']
+### `POST /api/v1/posts/batch-view/` [name='batch-post-view-increment']
 
 - **Description:**  
   Increments the view count for multiple posts in a single request.  
   This endpoint is intended to be called by the frontend when posts actually appear in the user's viewport (e.g., detected via Intersection Observer).
 
 - **Request:**  
-  `POST /api/posts/batch-view/`
+  `POST /api/v1/posts/batch-view/`
 
 - **Authentication:**  
   Required (JWT)

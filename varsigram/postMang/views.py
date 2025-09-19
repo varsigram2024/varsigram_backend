@@ -430,7 +430,7 @@ class IsFirestoreDocOwner(permissions.BasePermission):
 class BatchPostViewIncrementAPIView(APIView):
     """
     Increments the view count for multiple posts in a single request.
-    URL: /api/posts/batch_view/
+    URL: /posts/batch-view/
     """
     permission_classes = [permissions.IsAuthenticated]
     authentication_classes = [JWTAuthentication]
