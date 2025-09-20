@@ -429,25 +429,28 @@ class IsFirestoreDocOwner(permissions.BasePermission):
 
 class BatchPostViewIncrementAPIView(APIView):
     """
-    Increments the view count for multiple posts in a single request.
-    URL: /posts/batch-view/
+    Increments the view count for multiple posts, but only once per user per post.
     """
     permission_classes = [permissions.IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
     def post(self, request):
         post_ids = request.data.get('post_ids', [])
+        user_id = str(request.user.id)
         if not isinstance(post_ids, list) or not post_ids:
             return Response({"error": "A list of post_ids is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Use a Firestore batch to perform all increments atomically and efficiently
         batch = db.batch()
-        for post_id in set(post_ids): # Use a set to handle duplicates
+        incremented = 0
+        for post_id in set(post_ids):
             post_ref = db.collection('posts').document(post_id)
-            batch.update(post_ref, {'view_count': firestore.Increment(1)})
-        
+            view_ref = post_ref.collection('views').document(user_id)
+            if not view_ref.get().exists:
+                batch.set(view_ref, {'viewed_at': firestore.SERVER_TIMESTAMP})
+                batch.update(post_ref, {'view_count': firestore.Increment(1)})
+                incremented += 1
         batch.commit()
-        return Response({"message": f"{len(set(post_ids))} post view counts incremented successfully."}, status=status.HTTP_200_OK)
+        return Response({"message": f"{incremented} post view counts incremented (unique per user)."}, status=status.HTTP_200_OK)
     
 
 class PostListCreateFirestoreView(APIView):
