@@ -39,6 +39,7 @@ class FirestoreCommentSerializer(serializers.Serializer):
     tagged_users = serializers.ListField(
         child=serializers.CharField(max_length=255),
         required=False,)
+    replies = serializers.ListField(child=serializers.CharField(max_length=255), required=False)
     timestamp = serializers.DateTimeField(read_only=True, required=False, allow_null=True)
     author_profile_pic_url = serializers.URLField(read_only=True, allow_null=True, allow_blank=True)
     author_faculty = serializers.CharField(read_only=True, required=False, allow_null=True)
