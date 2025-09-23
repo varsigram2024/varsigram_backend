@@ -764,10 +764,16 @@ class CommentCreateFirestoreView(APIView):
                 if not parent_comment_ref.get().exists:
                     return Response({"error": "Parent comment not found"}, status=status.HTTP_400_BAD_REQUEST)
             
+            current_user = request.user
+            if hasattr(current_user, 'student'):
+                author_name = current_user.student.name
+            elif hasattr(current_user, 'organization'):
+                author_name = current_user.organization.organization_name
+            
             comment_payload = {
                 'post_id': post_id, # Redundant if in subcollection, but useful for queries
                 'author_id': user_id,
-                'author_username': request.user.email, # Denormalize for convenience
+                'author_name': author_name, 
                 'text': data['text'],
                 'timestamp': firestore.SERVER_TIMESTAMP,
                 # Add other fields like parent_comment_id for replies, etc.
