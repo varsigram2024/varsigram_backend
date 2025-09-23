@@ -993,20 +993,25 @@ class CommentListFirestoreView(APIView):
             for doc in docs:
                 comment_data = doc.to_dict()
                 comment_data['id'] = doc.id
-                comment_data['replies'] = [] # Initialize a list for replies
+                comment_data['replies'] = []  # Initialize a list for replies
                 comments_by_id[doc.id] = comment_data
-                
+
                 if 'author_id' in comment_data:
                     author_ids.add(str(comment_data['author_id']))
 
             # Step 3: Hydrate authors from Postgres in a single query.
             authors_map = {}
             if author_ids:
-                authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
+                authors_from_postgres = User.objects.filter(id__in=author_ids).only(
+                    'id', 'email', 'profile_pic_url', 'is_verified'
+                )
                 for author in authors_from_postgres:
                     author_name = None
                     display_name_slug = None
                     exclusive = False
+                    faculty = None
+                    department = None
+
                     if hasattr(author, 'student'):
                         author_name = author.student.name
                         display_name_slug = getattr(author.student, 'display_name_slug', None)
@@ -1023,14 +1028,26 @@ class CommentListFirestoreView(APIView):
                         "display_name_slug": display_name_slug,
                         "profile_pic_url": author.profile_pic_url,
                         "is_verified": author.is_verified,
-                        "exclusive": exclusive if hasattr(author, 'organization') else False,
-                        "faculty": faculty if hasattr(author, 'student') else None,
-                        "department": department if hasattr(author, 'student') else None,
+                        "exclusive": exclusive,
+                        "faculty": faculty,
+                        "department": department,
                     }
 
-            # Step 4: Build the nested comment/reply structure.
+            # Step 4: Build the nested comment/reply structure and apply author info.
             top_level_comments = []
             for comment_id, comment_data in comments_by_id.items():
+                author_id = str(comment_data.get('author_id'))
+                author_info = authors_map.get(author_id, {})
+
+                # Add all author-related keys to the comment data, regardless of it being a reply or top-level.
+                # This ensures consistent data structure for all comments.
+                comment_data['author_name'] = author_info.get('name')
+                comment_data['author_display_name_slug'] = author_info.get('display_name_slug')
+                comment_data['author_profile_pic_url'] = author_info.get('profile_pic_url')
+                comment_data['author_faculty'] = author_info.get('faculty')
+                comment_data['author_department'] = author_info.get('department')
+                comment_data['author_exclusive'] = author_info.get('exclusive')
+
                 parent_id = comment_data.get('parent_comment_id')
                 if parent_id and parent_id in comments_by_id:
                     # This is a reply, so add it to its parent's replies list.
@@ -1038,10 +1055,11 @@ class CommentListFirestoreView(APIView):
                 else:
                     # This is a top-level comment.
                     top_level_comments.append(comment_data)
-            
+
             # Step 5: Sort replies by timestamp for correct ordering
+            # Sort in ascending order (oldest to newest) for a conversational thread.
             for comment in comments_by_id.values():
-                comment['replies'].sort(key=lambda x: x.get('timestamp'), reverse=True)
+                comment['replies'].sort(key=lambda x: x.get('timestamp'), reverse=False)
 
             # Step 6: Paginate the top-level comments in memory.
             page_size = int(request.query_params.get("page_size", 10))
@@ -1049,12 +1067,11 @@ class CommentListFirestoreView(APIView):
             start_index = (page_number - 1) * page_size
             end_index = start_index + page_size
             paginated_comments = top_level_comments[start_index:end_index]
-            
-            # Step 7: Serialize the paginated data.
-            serializer = FirestoreCommentSerializer(paginated_comments, many=True, context={'authors_map': authors_map})
-            
+
+            # Step 7: Return the structured data.
+            # The data is already formatted, so we can return it directly.
             return Response({
-                "results": serializer.data,
+                "results": paginated_comments,
                 "next_page": page_number + 1 if end_index < len(top_level_comments) else None,
                 "total_comments": len(top_level_comments),
             }, status=status.HTTP_200_OK)
