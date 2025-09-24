@@ -331,16 +331,28 @@ class FeedView(APIView):
                 logger.info("Falling back to a hybrid general feed. ")
 
                 # Fetches a pool of recent posts
-                recent_posts_query = db.collection('posts').order_by('timestamp', direction='DESCENDING').limit(CANDIDATE_POOL_SIZE // 3)
-                recent_posts = [doc.to_dict() for doc in recent_posts_query.stream()]
+                recent_posts_query = db.collection('posts').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(int(CANDIDATE_POOL_SIZE // 3))
+                recent_posts = []
+                for doc in recent_posts_query.stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    recent_posts.append(post_data)
 
                 # Fetches a pool of popular posts (e.g., by like count)
-                popular_posts_query = db.collection('posts').order_by('like_count', direction='DESCENDING').limit(CANDIDATE_POOL_SIZE // 3)
-                popular_posts = [doc.to_dict() for doc in popular_posts_query.stream()]
+                popular_posts_query = db.collection('posts').order_by('like_count', direction=firestore.Query.DESCENDING).limit(int(CANDIDATE_POOL_SIZE // 3))
+                popular_posts = []
+                for doc in popular_posts_query.stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    popular_posts.append(post_data)
 
                 # Fetches a pool of popular posts (e.g., by view count)
-                viewed_posts_query = db.collection('posts').order_by('view_count', direction='DESCENDING').limit(CANDIDATE_POOL_SIZE // 3)
-                viewed_posts = [doc.to_dict() for doc in viewed_posts_query.stream()]
+                viewed_posts_query = db.collection('posts').order_by('view_count', direction=firestore.Query.DESCENDING).limit(int(CANDIDATE_POOL_SIZE // 3))
+                viewed_posts = []
+                for doc in viewed_posts_query.stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    viewed_posts.append(post_data)
 
                 # Combine the pools and remove duplicates
                 combined_posts = recent_posts + popular_posts + viewed_posts
