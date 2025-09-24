@@ -327,6 +327,31 @@ class FeedView(APIView):
             full_feed_list.extend(random.sample(org_followed_candidates, min(ratios['org_followed'], len(org_followed_candidates))))
 
             # print(f"Full feed list count before shuffle: {len(full_feed_list)}")
+            if len(full_feed_list) < page_size:
+                logger.info("Falling back to a hybrid general feed. ")
+
+                # Fetches a pool of recent posts
+                recent_posts_query = db.collection('posts').order_by('timestamp', direction='DESCENDING').limit(CANDIDATE_POOL_SIZE // 3)
+                recent_posts = [doc.to_dict() for doc in recent_posts_query.stream()]
+
+                # Fetches a pool of popular posts (e.g., by like count)
+                popular_posts_query = db.collection('posts').order_by('like_count', direction='DESCENDING').limit(CANDIDATE_POOL_SIZE // 3)
+                popular_posts = [doc.to_dict() for doc in popular_posts_query.stream()]
+
+                # Fetches a pool of popular posts (e.g., by view count)
+                viewed_posts_query = db.collection('posts').order_by('view_count', direction='DESCENDING').limit(CANDIDATE_POOL_SIZE // 3)
+                viewed_posts = [doc.to_dict() for doc in viewed_posts_query.stream()]
+
+                # Combine the pools and remove duplicates
+                combined_posts = recent_posts + popular_posts + viewed_posts
+                seen_ids = set()
+                hybrid_feed_candidates = []
+                for post in combined_posts:
+                    if post.get('id') not in seen_ids:
+                        hybrid_feed_candidates.append(post)
+                        seen_ids.add(post.get('id'))
+                
+                full_feed_list = hybrid_feed_candidates
 
             random.shuffle(full_feed_list)
 
