@@ -472,8 +472,9 @@ Most endpoints require authentication. Authentication is handled using token-bas
     *   Request: `GET`
     *   Authentication: Optional (some fields like `has_liked` depend on authentication)
     *   Query Parameters:
-        *   `page_size`: (optional, default: 20) Number of posts to return per page.
-        *   `start_after`: (optional) Firestore document ID to start after (for pagination).
+        *   `page`: (optional, default: 1) The page number for pagination.
+        *   `page_size`: (optional, default: 10) Number of posts to return per page.
+        *   `session_id`: (optional) A unique string to ensure consistent feed order for a session. If not provided, a new session ID is generated.
     *   Response (200 OK): Returns a paginated list of recent posts from exclusive organizations.
         ```json
         {
@@ -488,14 +489,20 @@ Most endpoints require authentication. Authentication is handled using token-bas
                     // ...other post fields...
                 }
             ],
-            "next_cursor": "next_post_id"
+            "session_id": "abc123-session-id",
+            "page": 1,
+            "page_size": 10,
+            "has_next": true
         }
         ```
     *   Response (200 OK, empty): If no exclusive organizations or posts are found.
         ```json
         {
             "results": [],
-            "next_cursor": null
+            "session_id": "abc123-session-id",
+            "page": 1,
+            "page_size": 10,
+            "has_next": false
         }
         ```
     *   Response (500 Internal Server Error): If an error occurs.

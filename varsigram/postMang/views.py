@@ -1402,7 +1402,7 @@ class ExclusiveOrgsRecentPostsView(APIView):
         try:
             # --- Pagination and Session parameters ---
             page = int(request.query_params.get("page", 1))
-            page_size = int(request.query_params.get("page_size", 20))
+            page_size = int(request.query_params.get("page_size", 10))
             session_id = request.query_params.get("session_id")
 
             # Generate a new session ID if none is provided
