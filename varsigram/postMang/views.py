@@ -8,6 +8,8 @@ from .models import (User, Follow, Student, Organization)
 from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, GenericFollowSerializer
 from .utils import get_exclusive_org_user_ids, get_student_user_ids
 import logging
+import random
+import uuid
 from datetime import datetime, timezone, timedelta
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
@@ -140,89 +142,276 @@ class ListFollowingView(generics.ListAPIView):
         )
 logger = logging.getLogger(__name__)
 
+def chunk_list(lst, chunk_size=10):
+    for i in range(0, len(lst), chunk_size):
+        yield lst[i:i + chunk_size]
+
 class FeedView(APIView):
     """
-    Feed: All posts by students, ordered by trending_score (DESC), then timestamp (DESC).
-    Supports cursor-based pagination.
+    Generates a randomized, paginated, and category-based feed with dynamic weighting
+    based on the user's profile type (Student or Organization).
     """
     permission_classes = [permissions.IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
+    def get_feed_ratios(self, user_profile):
+        """
+        Returns the correct post distribution ratios based on the user's profile.
+        """
+        if isinstance(user_profile, Student):
+            # Default ratios for a student user
+            return {
+                'followed': 3,
+                'not_followed_rel': 2,
+                'not_followed_no_rel': 2,
+                'org_not_exclusive': 1,
+                'org_followed': 2,
+            }
+        else:
+            # Ratios for an organization user (or other non-student types)
+            # Redistributes the 'not_followed_rel' posts (2) to other categories
+            return {
+                'followed': 4, # +1 from 'not_followed_rel'
+                'not_followed_rel': 0,
+                'not_followed_no_rel': 3, # +1 from 'not_followed_rel'
+                'org_not_exclusive': 1,
+                'org_followed': 2,
+            }
+
     def get(self, request):
         try:
-            page_size = int(request.query_params.get('page_size', 30))
-            start_after_score = request.query_params.get('start_after_score')
-            start_after_timestamp = request.query_params.get('start_after_timestamp')
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 10))
+            session_id = request.query_params.get('session_id')
+            if not session_id:
+                session_id = str(uuid.uuid4())
+            random.seed(session_id)
 
-            student_user_ids_str = get_student_user_ids()
-            if not student_user_ids_str:
-                logger.info("No student users found for feed.")
-                return Response({"results": [], "next_cursor": None}, status=status.HTTP_200_OK)
+            current_user = request.user
+            current_user_profile = None
+            # Corrected logic to get the profile and its following lists
+            following_user_ids = []
+            following_org_ids = []
+            
+            student_ct = ContentType.objects.get(model='student')
+            org_ct = ContentType.objects.get(model='organization')
 
-            current_user_id = str(request.user.id)
-            all_feed_posts = []
-            seen_post_ids = set()
+            if hasattr(current_user, 'student'):
+                current_user_profile = current_user.student
+                follows = Follow.objects.filter(
+                    follower_content_type=student_ct,
+                    follower_object_id=current_user_profile.id
+                )
+                following_student_ids = set(
+                    str(x) for x in follows.filter(followee_content_type=student_ct)
+                    .values_list('followee_object_id', flat=True)
+                )
+                following_org_ids = set(
+                    str(x) for x in follows.filter(followee_content_type=org_ct)
+                    .values_list('followee_object_id', flat=True)
+                )
+                following_user_ids = [str(uid) for uid in Student.objects.filter(id__in=following_student_ids).values_list('user_id', flat=True)]
+                following_org_ids = [str(uid) for uid in Organization.objects.filter(id__in=following_org_ids).values_list('user_id', flat=True)]
+            elif hasattr(current_user, 'organization'):
+                current_user_profile = current_user.organization
+                follows = Follow.objects.filter(
+                    follower_content_type=org_ct,
+                    follower_object_id=current_user_profile.id
+                )
+                following_student_ids = set(
+                    str(x) for x in follows.filter(followee_content_type=student_ct)
+                    .values_list('followee_object_id', flat=True)
+                )
+                following_org_ids = set(
+                    str(x) for x in follows.filter(followee_content_type=org_ct)
+                    .values_list('followee_object_id', flat=True)
+                )
+                following_user_ids = [str(uid) for uid in Student.objects.filter(id__in=following_student_ids).values_list('user_id', flat=True)]
+                following_org_ids = [str(uid) for uid in Organization.objects.filter(id__in=following_org_ids).values_list('user_id', flat=True)]
+            
+            # print(f"Following user IDs: {following_user_ids}")
+            # print(f"Following org IDs: {following_org_ids}")
+            # print(f"Current user profile: {current_user_profile}")
 
-            # Chunk student IDs for Firestore "in" query (max 10 per query)
-            def chunk(lst, size):
-                for i in range(0, len(lst), size):
-                    yield lst[i:i + size]
-
-            for user_id_chunk in chunk(student_user_ids_str, 10):
-                posts_query = db.collection('posts') \
-                    .where('author_id', 'in', user_id_chunk) \
-                    .order_by('trending_score', direction=firestore.Query.DESCENDING) \
-                    .order_by('timestamp', direction=firestore.Query.DESCENDING)
-
-                # Cursor pagination only applies to the first chunk
-                if start_after_score and start_after_timestamp and user_id_chunk == student_user_ids_str[:10]:
-                    try:
-                        ts = datetime.fromisoformat(start_after_timestamp)
-                        posts_query = posts_query.start_after({
-                            'trending_score': float(start_after_score),
-                            'timestamp': ts
-                        })
-                    except Exception as e:
-                        logger.warning(f"Invalid cursor: {e}")
-
-                for doc in posts_query.limit(50).stream():
-                    if doc.id in seen_post_ids:
-                        continue
+            # Get the correct ratios based on user type
+            ratios = self.get_feed_ratios(current_user_profile)
+            CANDIDATE_POOL_SIZE = 100 
+            
+            # --- Fetch a Large Pool of Candidate Posts for Randomization ---
+            followed_posts_candidates = []
+            for chunk in chunk_list(following_user_ids):
+                followed_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
+                for doc in followed_posts_query.stream():
                     post_data = doc.to_dict()
                     post_data['id'] = doc.id
-                    post_data['has_liked'] = False
-                    if current_user_id:
-                        like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
-                        post_data['has_liked'] = like_doc_ref.get().exists
-                    all_feed_posts.append(post_data)
-                    seen_post_ids.add(doc.id)
+                    followed_posts_candidates.append(post_data)
+            
+            # print(f"Followed posts candidates count: {len(followed_posts_candidates)}")
 
-            # Sort all posts by trending_score DESC, then timestamp DESC
-            all_feed_posts_sorted = sorted(
-                all_feed_posts,
-                key=lambda x: (-x.get('trending_score', 0), x.get('timestamp', datetime.min)),
-                reverse=False
-            )
+            not_followed_relations_candidates = []
+            shared_relations_users_ids = []
+            if isinstance(current_user_profile, Student):
+                # exclude_ids = following_user_ids | {current_user.id}
+                shared_relations_users_ids = list(
+                    Student.objects.filter(
+                        Q(faculty=current_user_profile.faculty) | 
+                        Q(department=current_user_profile.department) |
+                        Q(religion=current_user_profile.religion)
+                    ).exclude(user__id__in=[int(uid) for uid in following_user_ids]).exclude(user=current_user).values_list('user_id', flat=True)
+                )
+                # print(f"Shared relations user IDs before limit: {shared_relations_users_ids}")
+                for chunk in chunk_list([str(uid) for uid in shared_relations_users_ids]):
+                    relations_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
+                    for doc in relations_posts_query.stream():
+                        post_data = doc.to_dict()
+                        post_data['id'] = doc.id
+                        not_followed_relations_candidates.append(post_data)
+            
+            # print(f"Not followed relations candidates count: {len(not_followed_relations_candidates)}")
 
-            print(all_feed_posts)
+            all_other_user_ids = list(
+                Student.objects.exclude(user__id__in=[int(uid) for uid in following_user_ids]).exclude(user__id__in=shared_relations_users_ids).exclude(user=current_user)
+                .values_list('user_id', flat=True)
+            )[:CANDIDATE_POOL_SIZE]
 
-            # Paginate
-            paginated_posts = all_feed_posts_sorted[:page_size]
-            next_cursor = None
-            if len(paginated_posts) == page_size:
-                last = paginated_posts[-1]
-                next_cursor = {
-                    "trending_score": last.get('trending_score'),
-                    "timestamp": last.get('timestamp').isoformat() if last.get('timestamp') else None
-                }
+            # Build a set of author IDs from not_followed_relations_candidates for filtering
+            not_followed_rel_author_ids = set(post.get('author_id') for post in not_followed_relations_candidates)
 
-            # Hydrate author data only for authors in paginated_posts
-            author_ids = set(str(post['author_id']) for post in paginated_posts if 'author_id' in post)
+            not_followed_no_relations_candidates = []
+            for chunk in chunk_list([str(uid) for uid in all_other_user_ids]):
+                other_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
+                for doc in other_posts_query.stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    author_id = post_data.get('author_id')
+                    if author_id not in not_followed_rel_author_ids and author_id not in [str(uid) for uid in following_user_ids]:
+                        not_followed_no_relations_candidates.append(post_data)
+
+            org_followed_candidates = []
+            for chunk in chunk_list(following_org_ids):
+                org_followed_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
+                for doc in org_followed_query.stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    org_followed_candidates.append(post_data)
+            
+            # print(f"Org followed candidates count: {len(org_followed_candidates)}")
+            # print(f"not_followed_no_relations_candidates count: {len(not_followed_no_relations_candidates)}")
+
+            non_exclusive_org_ids = list(Organization.objects.filter(exclusive=False).exclude(user__id__in=[int(uid) for uid in following_org_ids]).values_list('user_id', flat=True))
+            org_not_exclusive_candidates = []
+            for chunk in chunk_list([str(uid) for uid in non_exclusive_org_ids]):
+                org_not_exclusive_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
+                for doc in org_not_exclusive_query.stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    org_not_exclusive_candidates.append(post_data)
+            
+            # print(f"Shared relations user IDs: {shared_relations_users_ids}")
+            # print(f"All other user IDs: {all_other_user_ids}")
+
+            
+            logger.info(f"Followed posts: {len(followed_posts_candidates)}")
+            logger.info(f"Not followed (relations): {len(not_followed_relations_candidates)}")
+            logger.info(f"Not followed (no relations): {len(not_followed_no_relations_candidates)}")
+            logger.info(f"Org followed: {len(org_followed_candidates)}")
+            logger.info(f"Org not exclusive: {len(org_not_exclusive_candidates)}")
+
+            # --- 2. Build the Final Randomized, Un-Paginated Feed using dynamic ratios ---
+            full_feed_list = []
+            
+            full_feed_list.extend(random.sample(followed_posts_candidates, min(ratios['followed'], len(followed_posts_candidates))))
+            full_feed_list.extend(random.sample(not_followed_no_relations_candidates, min(ratios['not_followed_no_rel'], len(not_followed_no_relations_candidates))))
+            full_feed_list.extend(random.sample(not_followed_relations_candidates, min(ratios['not_followed_rel'], len(not_followed_relations_candidates))))
+            full_feed_list.extend(random.sample(org_not_exclusive_candidates, min(ratios['org_not_exclusive'], len(org_not_exclusive_candidates))))
+            full_feed_list.extend(random.sample(org_followed_candidates, min(ratios['org_followed'], len(org_followed_candidates))))
+
+            # print(f"Full feed list count before shuffle: {len(full_feed_list)}")
+            if len(full_feed_list) < page_size:
+                logger.info("Falling back to a hybrid general feed. ")
+
+                # Fetches a pool of recent posts
+                recent_posts_query = db.collection('posts').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(int(CANDIDATE_POOL_SIZE // 3))
+                recent_posts = []
+                for doc in recent_posts_query.stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    recent_posts.append(post_data)
+
+                # Fetches a pool of popular posts (e.g., by like count)
+                popular_posts_query = db.collection('posts').order_by('like_count', direction=firestore.Query.DESCENDING).limit(int(CANDIDATE_POOL_SIZE // 3))
+                popular_posts = []
+                for doc in popular_posts_query.stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    popular_posts.append(post_data)
+
+                # Fetches a pool of popular posts (e.g., by view count)
+                viewed_posts_query = db.collection('posts').order_by('view_count', direction=firestore.Query.DESCENDING).limit(int(CANDIDATE_POOL_SIZE // 3))
+                viewed_posts = []
+                for doc in viewed_posts_query.stream():
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
+                    viewed_posts.append(post_data)
+
+                # Combine the pools and remove duplicates
+                combined_posts = recent_posts + popular_posts + viewed_posts
+                seen_ids = set()
+                hybrid_feed_candidates = []
+                for post in combined_posts:
+                    if post.get('id') not in seen_ids:
+                        hybrid_feed_candidates.append(post)
+                        seen_ids.add(post.get('id'))
+                
+                full_feed_list = hybrid_feed_candidates
+
+            random.shuffle(full_feed_list)
+
+            # print(f"Full feed list count after shuffle: {len(full_feed_list)}")
+
+
+
+            # --- 3. Paginate the Final List ---
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            
+            paginated_posts = full_feed_list[start_index:end_index]
+
+            # print(f"Paginated posts count before deduplication: {len(paginated_posts)}")
+            
+            unique_paginated_posts = []
+            seen_post_ids = set()
+            for post in paginated_posts:
+                if post.get('id') not in seen_post_ids:
+                    unique_paginated_posts.append(post)
+                    seen_post_ids.add(post.get('id'))
+            
+            # print(f"Paginated posts count after deduplication: {len(unique_paginated_posts)}")
+
+            final_posts_for_response = []
+            for post_data in unique_paginated_posts:
+                post_id = post_data.get('id')
+                if not post_id:
+                    continue
+                post_data['id'] = post_id
+                post_doc = db.collection('posts').document(post_id).get()
+                post_data['view_count'] = post_doc.to_dict().get('view_count', 0) if post_doc.exists else 0
+                post_data['like_count'] = post_doc.to_dict().get('like_count', 0) if post_doc.exists else 0
+                post_data['has_liked'] = db.collection('posts').document(post_id).collection('likes').document(str(current_user.id)).get().exists
+                final_posts_for_response.append(post_data)
+
+            # print(f"Final posts for response count: {len(final_posts_for_response)}")
+
+            # --- 4. Hydrate Author Data and Serialize ---
+            author_ids = set(str(post['author_id']) for post in final_posts_for_response if 'author_id' in post)
             authors_map = {}
-            authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
+            authors_from_postgres = User.objects.filter(id__in=author_ids)
             for author in authors_from_postgres:
                 author_name = display_name_slug = None
                 exclusive = False
+                author_faculty = None
+                author_department = None
+
                 if hasattr(author, 'student'):
                     author_name = author.student.name
                     display_name_slug = getattr(author.student, 'display_name_slug', None)
@@ -232,6 +421,7 @@ class FeedView(APIView):
                     author_name = author.organization.organization_name
                     display_name_slug = getattr(author.organization, 'display_name_slug', None)
                     exclusive = getattr(author.organization, 'exclusive', False)
+
                 authors_map[str(author.id)] = {
                     "id": author.id,
                     "email": author.email,
@@ -239,20 +429,25 @@ class FeedView(APIView):
                     "name": author_name,
                     "display_name_slug": display_name_slug,
                     "is_verified": author.is_verified,
-                    "exclusive": exclusive if hasattr(author, 'organization') else False,
-                    "faculty": author_faculty if hasattr(author, 'student') else None,
-                    "department": author_department if hasattr(author, 'student') else None,
+                    "exclusive": exclusive,
+                    "faculty": author_faculty,
+                    "department": author_department,
                 }
-
-            serializer = FirestorePostOutputSerializer(paginated_posts, many=True, context={'authors_map': authors_map})
+            serializer = FirestorePostOutputSerializer(final_posts_for_response, many=True, context={'authors_map': authors_map})
+            has_next_page = end_index < len(full_feed_list)
+            
             return Response({
                 "results": serializer.data,
-                "next_cursor": next_cursor
+                "session_id": session_id,
+                "page": page,
+                "page_size": page_size,
+                "has_next": has_next_page,
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
             logger.error(f"Error fetching feed posts: {str(e)}")
             return Response({"error": f"Failed to retrieve feed posts: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 # Custom Permission Example (simplified)
 class IsFirestoreDocOwner(permissions.BasePermission):
@@ -268,6 +463,33 @@ class IsFirestoreDocOwner(permissions.BasePermission):
 ##
 ## Post Views (Firestore)
 ##
+
+class BatchPostViewIncrementAPIView(APIView):
+    """
+    Increments the view count for multiple posts, but only once per user per post.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request):
+        post_ids = request.data.get('post_ids', [])
+        user_id = str(request.user.id)
+        if not isinstance(post_ids, list) or not post_ids:
+            return Response({"error": "A list of post_ids is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        batch = db.batch()
+        incremented = 0
+        for post_id in set(post_ids):
+            post_ref = db.collection('posts').document(post_id)
+            view_ref = post_ref.collection('views').document(user_id)
+            if not view_ref.get().exists:
+                batch.set(view_ref, {'viewed_at': firestore.SERVER_TIMESTAMP})
+                batch.update(post_ref, {'view_count': firestore.Increment(1)})
+                incremented += 1
+        batch.commit()
+        return Response({"message": f"{incremented} post view counts incremented (unique per user)."}, status=status.HTTP_200_OK)
+    
+
 class PostListCreateFirestoreView(APIView):
     """
     Create a new post or list all posts from Firestore.
@@ -299,6 +521,8 @@ class PostListCreateFirestoreView(APIView):
             for doc in docs:
                 post_data = doc.to_dict()
                 post_data['id'] = doc.id
+                post_data['view_count'] = post_data.get('view_count', 0)
+                post_data['like_count'] = post_data.get('like_count', 0)
                 posts_list.append(post_data)
                 last_doc_id = doc.id  # Will end up being the last doc in the loop
                 if 'author_id' in post_data:
@@ -380,6 +604,7 @@ class PostListCreateFirestoreView(APIView):
                     'comment_count': 0,
                     'share_count': 0,
                     'media_urls': data.get('media_urls', []), # Handle media URLs if provided
+                    'view_count': 0,
                     # Add other fields like media_urls, visibility, etc.
                 }
                 # Add a new document with an auto-generated ID
@@ -433,6 +658,8 @@ class PostDetailFirestoreView(APIView):
 
         if post_data:
             post_data['id'] = doc_ref.id
+            post_data['view_count'] = doc_ref.get().to_dict().get('view_count', 0)
+            post_data['like_count'] = doc_ref.get().to_dict().get('like_count', 0)
 
             # Hydrate author info
             author_id = str(post_data.get('author_id'))
@@ -566,14 +793,29 @@ class CommentCreateFirestoreView(APIView):
         serializer = FirestoreCommentSerializer(data=request.data)
         if serializer.is_valid():
             data = serializer.validated_data
+            parent_comment_id = data.get('parent_comment_id')
+
+            if parent_comment_id:
+                # Verify parent comment exists
+                parent_comment_ref = post_ref.collection('comments').document(parent_comment_id)
+                if not parent_comment_ref.get().exists:
+                    return Response({"error": "Parent comment not found"}, status=status.HTTP_400_BAD_REQUEST)
+            
+            current_user = request.user
+            if hasattr(current_user, 'student'):
+                author_name = current_user.student.name
+            elif hasattr(current_user, 'organization'):
+                author_name = current_user.organization.organization_name
             
             comment_payload = {
                 'post_id': post_id, # Redundant if in subcollection, but useful for queries
                 'author_id': user_id,
-                'author_username': request.user.email, # Denormalize for convenience
+                'author_name': author_name, 
                 'text': data['text'],
                 'timestamp': firestore.SERVER_TIMESTAMP,
                 # Add other fields like parent_comment_id for replies, etc.
+                'parent_comment_id': parent_comment_id if parent_comment_id else None,
+                'reply_count': 0 if not parent_comment_id else None, # Only top-level comments track reply_count
             }
 
             try:
@@ -605,6 +847,12 @@ class CommentCreateFirestoreView(APIView):
                     transaction.update(current_post_ref, {
                         'comment_count': firestore.Increment(1)
                     })
+
+                    if 'parent_comment_id' in payload and payload['parent_comment_id']:
+                        parent_comment_ref = current_post_ref.collection('comments').document(payload['parent_comment_id'])
+                        transaction.update(parent_comment_ref, {
+                            'reply_count': firestore.Increment(1)
+                        })
                     
                     return new_comment_ref.id # Return the ID of the newly created comment
 
@@ -612,41 +860,60 @@ class CommentCreateFirestoreView(APIView):
                 # It's called like a regular function, and db.transaction() is implicitly passed.
                 # db.transaction() will retry the function automatically on contention.
                 new_comment_id = create_comment_and_increment_count(db.transaction(), post_ref, comment_payload)
+
+
+
+                # Fetch the parent's author for notification if it's a reply
+                target_user = None
+                notification_title = ""
                 
-                # After successful transaction, fetch the created comment data for response
+                if parent_comment_id:
+                    # Case 1: Reply to a comment
+                    parent_comment_doc = post_ref.collection('comments').document(parent_comment_id).get()
+                    if parent_comment_doc.exists:
+                        parent_author_id = parent_comment_doc.to_dict().get('author_id')
+                        if parent_author_id and parent_author_id != str(request.user.id):
+                            target_user = User.objects.get(id=parent_author_id)
+                            notification_title = "New Reply"
+                    
+                else:
+                    # Case 2: New comment on a post
+                    post_author_id = post_doc_snapshot.to_dict().get('author_id')
+                    if post_author_id and post_author_id != str(request.user.id):
+                        target_user = User.objects.get(id=post_author_id)
+                        notification_title = "New Comment on Your Post"
+                
+                # Send the push notification if a target user was found
+                if target_user:
+                    send_push_notification(
+                        user=target_user,
+                        title=notification_title,
+                        body=f"{user_name} commented: {comment_payload['text'][:50]}...",
+                        data={
+                            "type": "comment" if not parent_comment_id else "reply",
+                            "post_id": post_id,
+                            "comment_id": new_comment_id,
+                            "commenter_id": user_id,
+                        }
+                    )
+                
                 created_comment_doc = post_ref.collection('comments').document(new_comment_id).get()
                 created_comment_data = created_comment_doc.to_dict()
                 created_comment_data['id'] = new_comment_id
-
-                post_author_id = post_doc_snapshot.to_dict().get('author_id')
-                
-                # Check if the post author exists and is not the commenter
-                if post_author_id and post_author_id != str(request.user.id):
-                    try:
-                        post_author = User.objects.get(id=post_author_id)
-                        # Send push notification to the post author about the new comment
-                        send_push_notification(
-                            user=post_author,
-                            title="New Comment on Your Post",
-                            body=f"{user_name} commented: {comment_payload['text'][:50]}...",
-                            data={
-                                "type": "comment",
-                                "post_id": post_id,
-                                "comment_id": new_comment_id,
-                                "commenter_id": user_id # The ID of the person who commented
-                            }
-                        )
-                    except User.DoesNotExist:
-                        pass
                 
                 return Response(created_comment_data, status=status.HTTP_201_CREATED)
 
-            except ValueError as ve: # Catch explicit errors from inside the transaction function
+            except User.DoesNotExist:
+                logger.warning("Notification target user not found.")
+                # We can continue since the comment was still created successfully
+                return Response(created_comment_data, status=status.HTTP_201_CREATED)
+            except ValueError as ve:
+                logger.error(f"Transaction failed: {str(ve)}")
                 return Response({"error": f"Transaction failed: {str(ve)}"}, status=status.HTTP_400_BAD_REQUEST)
             except Exception as e:
-                # Catch any other Firestore errors or general exceptions
-                # print(f"Error creating comment with transaction: {e}") # Log the full error for debugging
+                logger.error(f"Error creating comment: {e}", exc_info=True)
                 return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -685,20 +952,55 @@ class CommentDetailFirestoreView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, post_id, comment_id):
-        comment_ref = self.get_comment_ref(post_id, comment_id)
-        comment_doc = comment_ref.get()
-        if not comment_doc.exists:
-            return Response({"error": "Comment not found"}, status=status.HTTP_404_NOT_FOUND)
-        comment_data = comment_doc.to_dict()
-        if comment_data.get('author_id') != str(request.user.id):
-            return Response({"error": "You do not have permission to delete this comment."}, status=status.HTTP_403_FORBIDDEN)
-        try:
-            comment_ref.delete()
-            # Optionally decrement comment_count on the post
-            db.collection('posts').document(post_id).update({
+        # Use a transaction to ensure atomic updates
+        @firestore.transactional
+        def delete_comment_and_decrement_counts(transaction, post_ref, comment_ref):
+            comment_doc = comment_ref.get(transaction=transaction)
+            if not comment_doc.exists:
+                raise ValueError("Comment not found during transaction.")
+
+            comment_data = comment_doc.to_dict()
+            if comment_data.get('author_id') != str(request.user.id):
+                # The transaction will be rolled back and an exception raised
+                raise PermissionError("You do not have permission to delete this comment.")
+            
+            # Delete the comment
+            transaction.delete(comment_ref)
+
+            # Decrement comment_count on the post
+            transaction.update(post_ref, {
                 'comment_count': firestore.Increment(-1)
             })
+
+            # Check if it was a reply and decrement the parent's reply_count
+            parent_comment_id = comment_data.get('parent_comment_id')
+            if parent_comment_id:
+                parent_comment_ref = post_ref.collection('comments').document(parent_comment_id)
+                transaction.update(parent_comment_ref, {
+                    'reply_count': firestore.Increment(-1)
+                })
+            
+            # If the deleted comment was a top-level comment, also find and delete its replies
+            # This is critical for data integrity!
+            if not parent_comment_id:
+                replies_query = post_ref.collection('comments').where('parent_comment_id', '==', comment_id).stream()
+                for reply_doc in replies_query:
+                    transaction.delete(reply_doc.reference)
+                    # We don't need to decrement post's count for these since they are
+                    # already covered by the top-level comment's count.
+
+        try:
+            post_ref = db.collection('posts').document(post_id)
+            comment_ref = self.get_comment_ref(post_id, comment_id)
+            
+            delete_comment_and_decrement_counts(db.transaction(), post_ref, comment_ref)
+            
             return Response(status=status.HTTP_204_NO_CONTENT)
+
+        except PermissionError as pe:
+            return Response({"error": str(pe)}, status=status.HTTP_403_FORBIDDEN)
+        except ValueError as ve:
+            return Response({"error": str(ve)}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({"error": f"Firestore error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -717,43 +1019,36 @@ class CommentListFirestoreView(APIView):
             return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
 
         try:
-            # --- Pagination params ---
-            page_size = int(request.query_params.get("page_size", 10))
-            start_after_id = request.query_params.get("start_after")
-
+            # Step 1: Fetch ALL comments for the post.
             comments_ref = post_ref.collection('comments').order_by('timestamp', direction=firestore.Query.DESCENDING)
+            docs = comments_ref.stream()
 
-            if start_after_id:
-                start_after_doc = post_ref.collection('comments').document(start_after_id).get()
-                if start_after_doc.exists:
-                    comments_ref = comments_ref.start_after(start_after_doc)
-                else:
-                    return Response({"error": "Invalid start_after ID"}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Apply limit
-            docs = comments_ref.limit(page_size).stream()
-
-            comments_list = []
+            comments_by_id = {}
             author_ids = set()
-            last_doc_id = None
 
+            # Step 2: Organize comments into a dictionary and gather author IDs.
             for doc in docs:
                 comment_data = doc.to_dict()
                 comment_data['id'] = doc.id
-                comments_list.append(comment_data)
-                last_doc_id = doc.id
+                comment_data['replies'] = []  # Initialize a list for replies
+                comments_by_id[doc.id] = comment_data
 
                 if 'author_id' in comment_data:
                     author_ids.add(str(comment_data['author_id']))
 
-            # Hydrate authors
+            # Step 3: Hydrate authors from Postgres in a single query.
             authors_map = {}
             if author_ids:
-                authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
+                authors_from_postgres = User.objects.filter(id__in=author_ids).only(
+                    'id', 'email', 'profile_pic_url', 'is_verified'
+                )
                 for author in authors_from_postgres:
                     author_name = None
                     display_name_slug = None
                     exclusive = False
+                    faculty = None
+                    department = None
+
                     if hasattr(author, 'student'):
                         author_name = author.student.name
                         display_name_slug = getattr(author.student, 'display_name_slug', None)
@@ -765,25 +1060,62 @@ class CommentListFirestoreView(APIView):
                         exclusive = getattr(author.organization, 'exclusive', False)
 
                     authors_map[str(author.id)] = {
-                        "id": author.id,
+                        "id": str(author.id),
                         "name": author_name,
                         "display_name_slug": display_name_slug,
                         "profile_pic_url": author.profile_pic_url,
                         "is_verified": author.is_verified,
-                        "exclusive": exclusive if hasattr(author, 'organization') else False,
-                        "faculty": faculty if hasattr(author, 'student') else None,
-                        "department": department if hasattr(author, 'student') else None,
+                        "exclusive": exclusive,
+                        "faculty": faculty,
+                        "department": department,
                     }
 
-            serializer = FirestoreCommentSerializer(comments_list, many=True, context={'authors_map': authors_map})
+            # Step 4: Build the nested comment/reply structure and apply author info.
+            top_level_comments = []
+            for comment_id, comment_data in comments_by_id.items():
+                author_id = str(comment_data.get('author_id'))
+                author_info = authors_map.get(author_id, {})
 
+                # Add all author-related keys to the comment data, regardless of it being a reply or top-level.
+                # This ensures consistent data structure for all comments.
+                comment_data['author_name'] = author_info.get('name')
+                comment_data['author_display_name_slug'] = author_info.get('display_name_slug')
+                comment_data['author_profile_pic_url'] = author_info.get('profile_pic_url')
+                comment_data['author_faculty'] = author_info.get('faculty')
+                comment_data['author_department'] = author_info.get('department')
+                comment_data['author_exclusive'] = author_info.get('exclusive')
+
+                parent_id = comment_data.get('parent_comment_id')
+                if parent_id and parent_id in comments_by_id:
+                    # This is a reply, so add it to its parent's replies list.
+                    comments_by_id[parent_id]['replies'].append(comment_data)
+                else:
+                    # This is a top-level comment.
+                    top_level_comments.append(comment_data)
+
+            # Step 5: Sort replies by timestamp for correct ordering
+            # Sort in ascending order (oldest to newest) for a conversational thread.
+            for comment in comments_by_id.values():
+                comment['replies'].sort(key=lambda x: x.get('timestamp'), reverse=False)
+
+            # Step 6: Paginate the top-level comments in memory.
+            page_size = int(request.query_params.get("page_size", 10))
+            page_number = int(request.query_params.get("page", 1))
+            start_index = (page_number - 1) * page_size
+            end_index = start_index + page_size
+            paginated_comments = top_level_comments[start_index:end_index]
+
+            # Step 7: Return the structured data.
+            # The data is already formatted, so we can return it directly.
             return Response({
-                "results": serializer.data,
-                "next_cursor": last_doc_id if len(comments_list) == page_size else None
+                "results": paginated_comments,
+                "next_page": page_number + 1 if end_index < len(top_level_comments) else None,
+                "total_comments": len(top_level_comments),
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
             return Response({"error": f"Failed to retrieve comments: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
 
@@ -1060,84 +1392,92 @@ class LikeListFirestoreView(APIView):
 
 class ExclusiveOrgsRecentPostsView(APIView):
     """
-    List recent posts from organizations with exclusive=True.
-    Supports cursor-based pagination.
+    List recent posts from exclusive organizations in a randomized, paginated order.
+    Uses a session ID for consistent pagination.
     """
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     authentication_classes = [JWTAuthentication]
 
     def get(self, request):
         try:
-            # --- Pagination parameters ---
-            page_size = int(request.query_params.get("page_size", 20))
-            start_after = request.query_params.get("start_after")  # Firestore doc ID
+            # --- Pagination and Session parameters ---
+            page = int(request.query_params.get("page", 1))
+            page_size = int(request.query_params.get("page_size", 10))
+            session_id = request.query_params.get("session_id")
+
+            # Generate a new session ID if none is provided
+            if not session_id:
+                session_id = str(uuid.uuid4())
+            
+            # Seed the random generator for consistent shuffling
+            random.seed(session_id)
 
             # 1. Get all exclusive org user IDs
-            exclusive_org_user_ids_str = get_exclusive_org_user_ids()
+            exclusive_orgs = Organization.objects.filter(exclusive=True)
+            exclusive_org_user_ids_str = [str(org.user_id) for org in exclusive_orgs]
+            
             if not exclusive_org_user_ids_str:
-                return Response({"results": [], "next_cursor": None}, status=200)
+                return Response({"results": [], "session_id": session_id, "has_next": False}, status=200)
 
             current_user_id = str(request.user.id) if request.user.is_authenticated else None
-
-            # 2. Break user IDs into chunks of 10 for Firestore "in" queries
+            
+            # 2. Fetch ALL posts from exclusive orgs and prepare for shuffling
+            all_posts = []
+            
+            # Since Firestore has a limit of 10 for 'in' queries, we must chunk the list
             def chunk(lst, size):
                 for i in range(0, len(lst), size):
                     yield lst[i:i + size]
+            
+            # Firestore requires the 'in' list to be non-empty
+            if exclusive_org_user_ids_str:
+                for user_id_chunk in chunk(exclusive_org_user_ids_str, 10):
+                    posts_query = db.collection("posts").where("author_id", "in", user_id_chunk)
+                    for doc in posts_query.stream():
+                        post_data = doc.to_dict()
+                        post_data['id'] = doc.id
+                        post_data['has_liked'] = False
+                        if current_user_id:
+                            like_doc_ref = db.collection('posts').document(doc.id).collection('likes').document(current_user_id)
+                            post_data['has_liked'] = like_doc_ref.get().exists
+                        all_posts.append(post_data)
 
-            all_posts = []
+            # 3. Shuffle the ENTIRE list of posts
+            random.shuffle(all_posts)
+            
+            # --- Pagination ---
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+            
+            paginated_posts = all_posts[start_index:end_index]
+            has_next = end_index < len(all_posts)
 
-            for user_id_chunk in chunk(exclusive_org_user_ids_str, 10):
-                query_ref = db.collection("posts") \
-                    .where("author_id", "in", user_id_chunk) \
-                    .order_by("timestamp", direction=firestore.Query.DESCENDING)
-
-                if start_after:
-                    # Get the cursor doc if provided
-                    cursor_doc = db.collection("posts").document(start_after).get()
-                    if cursor_doc.exists:
-                        query_ref = query_ref.start_after(cursor_doc)
-
-                # Add a high upper limit to combine and slice later
-                for doc in query_ref.limit(50).stream():
-                    post_data = doc.to_dict()
-                    post_data['id'] = doc.id
-                    post_data['has_liked'] = False
-                    if current_user_id:
-                        like_doc_ref = db.collection('posts').document(doc.id).collection('likes').document(current_user_id)
-                        post_data['has_liked'] = like_doc_ref.get().exists
-                    all_posts.append(post_data)
-
-            # 3. Sort and trim posts to match final pagination
-            all_posts_sorted = sorted(all_posts, key=lambda x: x['timestamp'], reverse=True)
-            paginated_posts = all_posts_sorted[:page_size]
-            next_cursor = paginated_posts[-1]['id'] if len(paginated_posts) == page_size else None
-
-            # 4. Hydrate authors map
+            # 4. Hydrate authors map (This part remains largely the same)
             authors_map = {}
-            for user_id in exclusive_org_user_ids_str:
+            author_ids = [post['author_id'] for post in paginated_posts]
+            for author in User.objects.filter(id__in=author_ids):
                 try:
-                    author = User.objects.only('id', 'email', 'profile_pic_url', 'is_verified').get(id=user_id)
-                    author_name = author.organization.organization_name
-                    exclusive = getattr(author.organization, 'exclusive', False)
-                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
-
+                    org = author.organization
                     authors_map[str(author.id)] = {
                         "id": author.id,
                         "email": author.email,
                         "profile_pic_url": author.profile_pic_url,
-                        "name": author_name,
+                        "name": org.organization_name,
                         "is_verified": author.is_verified,
-                        "exclusive": exclusive if hasattr(author, 'organization') else False,
-                        "display_name_slug": display_name_slug
+                        "exclusive": org.exclusive,
+                        "display_name_slug": getattr(org, 'display_name_slug', None),
                     }
-                except User.DoesNotExist:
+                except Organization.DoesNotExist:
                     continue
 
             serializer = FirestorePostOutputSerializer(paginated_posts, many=True, context={'authors_map': authors_map})
 
             return Response({
                 "results": serializer.data,
-                "next_cursor": next_cursor
+                "session_id": session_id,
+                "page": page,
+                "page_size": page_size,
+                "has_next": has_next
             }, status=status.HTTP_200_OK)
 
         except Exception as e:

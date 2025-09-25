@@ -16,7 +16,9 @@ class FirestorePostCreateSerializer(serializers.Serializer):
         allow_empty=True,
         help_text="List of media URLs associated with the post."
     )
-    # Add other fields like media_url, etc.
+    tagged_users = serializers.ListField(
+        child=serializers.CharField(max_length=255),
+        required=False,)
 
     def validate_content(self, value):
         if not value.strip():
@@ -33,6 +35,11 @@ class FirestoreCommentSerializer(serializers.Serializer):
     author_name = serializers.CharField(read_only=True, required=False, allow_null=True)
     author_display_name_slug = serializers.CharField(read_only=True, required=False, allow_null=True)
     text = serializers.CharField(max_length=2000)
+    parent_comment_id = serializers.CharField(required=False, allow_null=True, max_length=20)
+    tagged_users = serializers.ListField(
+        child=serializers.CharField(max_length=255),
+        required=False,)
+    replies = serializers.ListField(child=serializers.CharField(max_length=255), required=False)
     timestamp = serializers.DateTimeField(read_only=True, required=False, allow_null=True)
     author_profile_pic_url = serializers.URLField(read_only=True, allow_null=True, allow_blank=True)
     author_faculty = serializers.CharField(read_only=True, required=False, allow_null=True)
@@ -104,6 +111,7 @@ class FirestorePostOutputSerializer(serializers.Serializer):
     like_count = serializers.IntegerField(read_only=True, help_text="Number of likes on the post.")
     comment_count = serializers.IntegerField(read_only=True, help_text="Number of comments on the post.")
     share_count = serializers.IntegerField(read_only=True, help_text="Number of shares of the post.")
+    view_count = serializers.IntegerField(read_only=True, help_text="Number of views of the post.")
 
     # If you implement the 'has_liked' logic in your view:
     has_liked = serializers.BooleanField(read_only=True, required=False, help_text="True if the current authenticated user has liked this post.")

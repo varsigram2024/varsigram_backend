@@ -146,18 +146,19 @@ Most endpoints require authentication. Authentication is handled using token-bas
 
 *   **`GET /users/search/`**  [name='user-search']
 
-    *   Description: Search for users (students or organizations) using filters such as name, faculty, and department.
+    *   Description: Search for users (students or organizations) using filters such as name, faculty, and department.  
+        This endpoint searches both Students and Organizations models and returns a unified result set.
     *   Request: `GET`
     *   Authentication: Required (JWT)
     *   Query Parameters:
-        *   `type`: (required) `"student"` or `"organization"` — specifies which user type to search.
+        *   `query`: (optional) Search by student name or organization name (case-insensitive, partial match).
         *   `faculty`: (optional, students only) Filter by faculty name (case-insensitive).
         *   `department`: (optional, students only) Filter by department name (case-insensitive).
-        *   `query`: (optional) Search by student name or organization name (case-insensitive).
     *   Response (200 OK): Returns a list of matching users.
         ```json
         [
             {
+                "type": "student",
                 "email": "student@email.com",
                 "faculty": "Science",
                 "department": "Mathematics",
@@ -165,6 +166,7 @@ Most endpoints require authentication. Authentication is handled using token-bas
                 "display_name_slug": "john-doe-1"
             },
             {
+                "type": "organization",
                 "email": "org@email.com",
                 "organization_name": "Varsigram Inc",
                 "display_name_slug": "varsigram-inc-1",
@@ -172,16 +174,10 @@ Most endpoints require authentication. Authentication is handled using token-bas
             }
         ]
         ```
-    *   Response (400 Bad Request): If required parameters are missing or invalid.
+    *   Response (400 Bad Request): If no valid filter is provided.
         ```json
         {
-            "message": "Missing \"type\" parameter. Please specify \"student\" or \"organization\"."
-        }
-        ```
-        or
-        ```json
-        {
-            "message": "Invalid \"type\" parameter. Must be \"student\" or \"organization\"."
+            "message": "Provide at least \"query\", \"faculty\", or \"department\"."
         }
         ```
     *   Response (200 OK, empty): If no users match the search.
@@ -190,9 +186,11 @@ Most endpoints require authentication. Authentication is handled using token-bas
         ```
 
 **Notes:**
-- For `type=student`, at least one of `faculty`, `department`, or `query` must be provided.
-- For `type=organization`, only `query` is supported for filtering.
-- All searches are case-insensitive and partial matches are supported.
+- The endpoint searches both students and organizations and combines results.
+- For students, you can filter by `faculty`, `department`, or `query`.
+- For organizations, only `query` is supported for filtering.
+- All searches are case-insensitive and support partial matches.
+- The `type` field in each result indicates whether
 
 
 *   **`POST /deactivate/`**  [name='user-deactivate']
@@ -390,64 +388,6 @@ Most endpoints require authentication. Authentication is handled using token-bas
     *   Authentication: Required
     *   Response (204 No Content): On successful deletion.
 
-*   **`GET /posts/<str:post_id>/comments/`**  [name='post-comments']
-
-    *   Description: Retrieves comments for a specific post. Supports cursor-based pagination.
-    *   Request: `GET`
-    *   Authentication: Optional (some fields may depend on authentication)
-    *   Path Parameters:
-        *   `post_id`: The ID of the post whose comments you want to retrieve.
-    *   Query Parameters:
-        *   `page_size`: (optional, default: 10) Number of comments to return per page.
-        *   `start_after`: (optional) Firestore comment ID to start after (for pagination).
-    *   Response (200 OK): Returns a paginated list of comments for the post.
-        ```json
-        {
-            "results": [
-                {
-                    "id": "comment_id",
-                    "text": "Comment text",
-                    "author_id": "user_id",
-                    "timestamp": "2025-07-22T12:34:56Z",
-                    "profile_pic_url": "https://...",
-                    "display_name_slug": "user-slug",
-                    // ...other comment fields...
-                }
-            ],
-            "next_cursor": "next_comment_id"
-        }
-        ```
-    *   Response (200 OK, empty): If the post has no comments.
-        ```json
-        {
-            "results": [],
-            "next_cursor": null
-        }
-        ```
-    *   Response (404 Not Found): If the post does not exist.
-        ```json
-        {
-            "error": "Post not found"
-        }
-        ```
-    *   Response (500 Internal Server Error): If an error occurs.
-        ```json
-        {
-            "error": "Failed to retrieve comments: <error_message>"
-        }
-        ```
-
-*   **`POST /posts/<str:post_id>/comments/create/`**  [name='post-detail']
-
-    *   Adds a comment to a post.
-    *   Authentication: Required
-    *   Request Body (JSON):
-        ```json
-        {
-            "text": "Comment text"
-        }
-        ```
-    *   Response (201 Created): Returns the created comment.
 
 *   **`POST /posts/<str:post_id>/like/`**  [name='post-like']
 
@@ -526,134 +466,15 @@ Most endpoints require authentication. Authentication is handled using token-bas
 - If authenticated, the `has_liked`
 
 
-*   **`PUT /posts/{post_id}/comments/{comment_id}/`**  
-    *Edit a comment (author only)*
-
-    - **Description:** Update the content of a specific comment on a post. Only the comment's author can edit.
-    - **Authentication:** Required (JWT, verified user)
-    - **Path Parameters:**
-        - `post_id`: The ID of the post.
-        - `comment_id`: The ID of the comment to edit.
-    - **Request Body:**
-        ```json
-        {
-            "text": "Updated comment text"
-        }
-        ```
-    - **Response (200 OK):**
-        ```json
-        {
-            "id": "comment_id",
-            "text": "Updated comment text",
-            "author_id": "user_id",
-            "timestamp": "2025-07-22T12:34:56Z",
-            // ...other comment fields...
-        }
-        ```
-    - **Response (403 Forbidden):**
-        ```json
-        {
-            "error": "You do not have permission to edit this comment."
-        }
-        ```
-    - **Response (404 Not Found):**
-        ```json
-        {
-            "error": "Comment not found"
-        }
-        ```
-
-*   **`DELETE /posts/{post_id}/comments/{comment_id}/`**  
-    *Delete a comment (author only)*
-
-    - **Description:** Delete a specific comment on a post. Only the comment's author can delete.
-    - **Authentication:** Required (JWT, verified user)
-    - **Path Parameters:**
-        - `post_id`: The ID of the post.
-        - `comment_id`: The ID of the comment to delete.
-    - **Response (204 No Content):** Comment deleted successfully.
-    - **Response (403 Forbidden):**
-        ```json
-        {
-            "error": "You do not have permission to delete this comment."
-        }
-        ```
-    - **Response (404 Not Found):**
-        ```json
-        {
-            "error": "Comment not found"
-        }
-        ```
-
-**Notes:**
-- Only the author of the comment can edit or delete it.
-- Deleting a comment decrements the parent post's `comment_count`.
-- Editing supports partial updates (PATCH semantics via PUT).
-
-*   **`GET /feed/`**  [name='feed']
-
-    *   Description: Retrieves the main feed of posts by students, ordered by `trending_score` (descending) and then by `timestamp` (descending). Supports cursor-based pagination.
-    *   Request: `GET`
-    *   Authentication: Required (JWT)
-    *   Query Parameters:
-        *   `page_size`: (optional, default: 30) Number of posts to return per page.
-        *   `start_after_score`: (optional) The `trending_score` of the last post from the previous page (for cursor-based pagination).
-        *   `start_after_timestamp`: (optional) The `timestamp` of the last post from the previous page (for cursor-based pagination).
-    *   Response (200 OK): Returns a paginated list of student posts.
-        ```json
-        {
-            "results": [
-                {
-                    "id": "post_id",
-                    "content": "Post content",
-                    "timestamp": "2025-07-22T12:34:56Z",
-                    "author_id": "student_user_id",
-                    "trending_score": 42.5,
-                    "has_liked": false,
-                    "media_urls": [],
-                    // ...other post fields...
-                }
-            ],
-            "next_cursor": {
-                "trending_score": 42.5,
-                "timestamp": "2025-07-22T12:34:56Z"
-            }
-        }
-        ```
-    *   Response (200 OK, empty): If no posts are found.
-        ```json
-        {
-            "results": [],
-            "next_cursor": null
-        }
-        ```
-    *   Response (500 Internal Server Error): If an error occurs.
-        ```json
-        {
-            "error": "Failed to retrieve feed posts: <error_message>"
-        }
-        ```
-
-**Notes:**
-- The endpoint returns posts sorted by `trending_score` and then by `timestamp`, most recent and trending first.
-- Pagination is handled via the `start_after_score` and `start_after_timestamp` query parameters, and the `next_cursor` in the response.
-- Each post includes hydrated author information in the response context.
-- The `has_liked` field reflects whether the current user has
-<!-- 
-*   **`GET /trending/`**  [name='trending-posts']
-
-    *   Retrieves trending posts (based on likes, shares, or other criteria).
-    *   Request: GET
-    *   Response (200 OK): Returns a list of trending posts. -->
-
 *   **`GET /official`**  [name='exclusive-orgs-recent-posts']
 
     *   Description: Retrieves recent posts from organizations marked as `exclusive=True`. Supports cursor-based pagination.
     *   Request: `GET`
     *   Authentication: Optional (some fields like `has_liked` depend on authentication)
     *   Query Parameters:
-        *   `page_size`: (optional, default: 20) Number of posts to return per page.
-        *   `start_after`: (optional) Firestore document ID to start after (for pagination).
+        *   `page`: (optional, default: 1) The page number for pagination.
+        *   `page_size`: (optional, default: 10) Number of posts to return per page.
+        *   `session_id`: (optional) A unique string to ensure consistent feed order for a session. If not provided, a new session ID is generated.
     *   Response (200 OK): Returns a paginated list of recent posts from exclusive organizations.
         ```json
         {
@@ -668,14 +489,20 @@ Most endpoints require authentication. Authentication is handled using token-bas
                     // ...other post fields...
                 }
             ],
-            "next_cursor": "next_post_id"
+            "session_id": "abc123-session-id",
+            "page": 1,
+            "page_size": 10,
+            "has_next": true
         }
         ```
     *   Response (200 OK, empty): If no exclusive organizations or posts are found.
         ```json
         {
             "results": [],
-            "next_cursor": null
+            "session_id": "abc123-session-id",
+            "page": 1,
+            "page_size": 10,
+            "has_next": false
         }
         ```
     *   Response (500 Internal Server Error): If an error occurs.
@@ -691,6 +518,230 @@ Most endpoints require authentication. Authentication is handled using token-bas
 - Each post includes hydrated author information in the response context.
 - Only organizations with `exclusive=True` are included.
 - If authenticated, the `has_liked` field reflects whether the current user has liked each post.
+
+# Comments API Documentation
+
+---
+
+## Endpoints
+
+### 1. Create a Comment or Reply  
+`POST /api/posts/<post_id>/comments/create/`
+
+- **Description:**  
+  Create a new comment on a post, or reply to an existing comment.
+- **Authentication:**  
+  Required (JWT, verified user)
+- **Request Body:**
+    ```json
+    {
+      "text": "Your comment text",
+      "parent_comment_id": "optional_parent_comment_id" // Only for replies
+    }
+    ```
+- **Response (201 Created):**
+    ```json
+    {
+      "id": "comment_id",
+      "post_id": "post_id",
+      "author_id": "user_id",
+      "author_username": "user@example.com",
+      "text": "Your comment text",
+      "timestamp": "2025-09-17T12:34:56Z",
+      "parent_comment_id": "optional_parent_comment_id",
+      "reply_count": 0
+    }
+    ```
+- **Notes:**
+  - If `parent_comment_id` is provided, the comment is treated as a reply.
+  - Increments `comment_count` on the post and `reply_count` on the parent comment (for replies).
+  - Sends push notifications to post author or parent comment author.
+
+---
+
+### 2. List Comments  
+`GET /api/posts/<post_id>/comments/`
+
+- **Description:**  
+  List all comments and replies for a post, paginated.
+- **Authentication:**  
+  Optional
+- **Query Parameters:**  
+  - `page_size` (default: 10)
+  - `page` (default: 1)
+- **Response (200 OK):**
+    ```json
+    {
+      "results": [
+        {
+          "id": "comment_id",
+          "author_id": "user_id",
+          "text": "Comment text",
+          "timestamp": "...",
+          "reply_count": 2,
+          "replies": [ ...nested replies... ]
+        }
+        // ...
+      ],
+      "next_page": 2,
+      "total_comments": 15
+    }
+    ```
+- **Notes:**
+  - Returns paginated top-level comments with nested replies.
+  - Author info is hydrated from PostgreSQL.
+
+---
+
+### 3. Retrieve, Edit, or Delete a Comment  
+`GET /api/posts/<post_id>/comments/<comment_id>/`  
+`PUT /api/posts/<post_id>/comments/<comment_id>/`  
+`DELETE /api/posts/<post_id>/comments/<comment_id>/`
+
+- **Description:**  
+  Retrieve, update, or delete a specific comment.
+- **Authentication:**  
+  Required for edit/delete (JWT, verified user)
+- **Request Body (PUT):**
+    ```json
+    {
+      "text": "Updated comment text"
+    }
+    ```
+- **Response:**  
+  - `200 OK` for GET/PUT, `204 No Content` for DELETE.
+  - Error responses for unauthorized access or comment not found.
+- **Notes:**
+  - Only the comment author can edit or delete.
+  - Deleting a top-level comment also deletes its replies.
+  - Updates `comment_count` and `reply_count` as needed.
+
+---
+
+## General Notes
+
+- All comment endpoints use Firestore transactions for atomic updates.
+- Replies are stored as comments with a `parent_comment_id` field.
+- Author info is hydrated from PostgreSQL for richer responses.
+- Error responses are descriptive for missing resources or permissions.
+- Push notifications are sent for new comments and replies.
+
+---
+
+### `GET /feed/` [name='feed-view']
+
+- **Description:**  
+  Returns a randomized, paginated feed of posts for the authenticated user.  
+  The feed is dynamically weighted based on the user's profile type (Student or Organization) and includes posts from followed users, organizations, and other relevant categories.
+
+- **Request:**  
+  `GET /feed/`
+
+- **Authentication:**  
+  Required (JWT)
+
+- **Query Parameters:**
+  - `page`: (optional, default: 1) The page number for pagination.
+  - `page_size`: (optional, default: 10) Number of posts per page.
+  - `session_id`: (optional) A unique string to ensure consistent feed order for a session. If not provided, a new session ID is generated.
+
+- **Response (200 OK):**
+    ```json
+    {
+      "results": [
+        {
+          "id": "post_id_123",
+          "author_id": "user_id_456",
+          "author_name": "John Doe",
+          "author_profile_pic_url": "https://...",
+          "is_verified": true,
+          "exclusive": false,
+          "faculty": "Science",
+          "department": "Mathematics",
+          "display_name_slug": "john-doe-1",
+          "content": "Post content here...",
+          "timestamp": "2025-09-17T12:34:56Z",
+          "media_urls": [],
+          "view_count": 42,
+          "like_count": 5,
+          "has_liked": false
+        }
+        // ...more posts
+      ],
+      "session_id": "abc123-session-id",
+      "page": 1,
+      "page_size": 10,
+      "has_next": true
+    }
+    ```
+
+- **Response (400/500):**
+    ```json
+    {
+      "error": "Failed to retrieve feed posts: <error message>"
+    }
+    ```
+
+**Notes:**
+- The feed is shuffled and weighted per user type for diversity.
+- `view_count` is incremented only when the frontend calls the batch view endpoint for posts actually seen.
+- `like_count` and `has_liked` are included for each post.
+- Use the returned `session_id` for consistent pagination within a session.
+- `has_next` indicates if more pages are available.
+
+
+### `POST /api/v1/posts/batch-view/` [name='batch-post-view-increment']
+
+- **Description:**  
+  Increments the view count for multiple posts in a single request.  
+  This endpoint is intended to be called by the frontend when posts actually appear in the user's viewport (e.g., detected via Intersection Observer).
+
+- **Request:**  
+  `POST /api/v1/posts/batch-view/`
+
+- **Authentication:**  
+  Required (JWT)
+
+- **Request Body:**
+    ```json
+    {
+      "post_ids": ["post_id_1", "post_id_2", "post_id_3"]
+    }
+    ```
+
+- **Response (200 OK):**
+    ```json
+    {
+      "message": "3 post view counts incremented successfully."
+    }
+    ```
+
+- **Response (400 Bad Request):**
+    ```json
+    {
+      "error": "A list of post_ids is required."
+    }
+    ```
+
+- **Response (500 Internal Server Error):**
+    ```json
+    {
+      "error": "Failed to increment view count: <error message>"
+    }
+    ```
+
+**Notes:**
+- Only unique post IDs are processed per request.
+- Use this endpoint to increment views only for posts that are actually seen by the user.
+- This does not affect like
+
+<!-- 
+*   **`GET /trending/`**  [name='trending-posts']
+
+    *   Retrieves trending posts (based on likes, shares, or other criteria).
+    *   Request: GET
+    *   Response (200 OK): Returns a list of trending posts. -->
+
 
 ### Following & Followers
 

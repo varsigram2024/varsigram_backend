@@ -5,12 +5,13 @@ from .views import (
     LikeToggleFirestoreView, LikeListFirestoreView,
     UserPostsFirestoreView, FeedView,
     WhoToFollowView, ExclusiveOrgsRecentPostsView,
-    VerifiedOrgBadge
+    VerifiedOrgBadge, BatchPostViewIncrementAPIView,
 )
 
 app_name = 'postMang'
 
 urlpatterns = [
+    path('posts/batch-view/', BatchPostViewIncrementAPIView.as_view(), name='batch-view'),
     path('posts/', PostListCreateFirestoreView.as_view(), name='post-list-create'),
     path('posts/<str:post_id>/', PostDetailFirestoreView.as_view(), name='post-detail'),
     path('posts/<str:post_id>/comments/create/', CommentCreateFirestoreView.as_view(), name='post-comment-create'),
