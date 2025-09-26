@@ -144,54 +144,63 @@ Most endpoints require authentication. Authentication is handled using token-bas
     *   Authentication: Required
     *   Response (200 OK): Returns user profile data and profile type.
 
-*   **`GET /users/search/`**  [name='user-search']
+-----
 
-    *   Description: Search for users (students or organizations) using filters such as name, faculty, and department.  
-        This endpoint searches both Students and Organizations models and returns a unified result set.
-    *   Request: `GET`
-    *   Authentication: Required (JWT)
-    *   Query Parameters:
-        *   `query`: (optional) Search by student name or organization name (case-insensitive, partial match).
-        *   `faculty`: (optional, students only) Filter by faculty name (case-insensitive).
-        *   `department`: (optional, students only) Filter by department name (case-insensitive).
-    *   Response (200 OK): Returns a list of matching users.
+## 🌐 API Endpoint Documentation: User Search
+
+  * **`GET /users/search/`**  \[name='user-search']
+
+      * **Description**: Search for users (students or organizations) using filters such as name, faculty, and department. This endpoint searches both **Student** and **Organization** models and returns a unified, **paginated** result set.
+      * **Request**: `GET`
+      * **Authentication**: Required (**JWT**)
+      * **Permissions**: `IsAuthenticated`
+      * **Query Parameters**:
+          * `query`: (**Optional** $\\rightarrow$ see **Mandatory Filter Note**) Search by student name or organization name (**case-insensitive, partial match**).
+          * `faculty`: (**Optional**, students only) Filter by student's faculty name (**case-insensitive, partial match**).
+          * `department`: (**Optional**, students only) Filter by student's department name (**case-insensitive, partial match**).
+          * `page`: (Optional) The page number to retrieve. Defaults to **1**.
+          * `page_size`: (Optional) Custom page size. Max size is **50**. Defaults to **10**.
+      * **Response (200 OK)**: Returns a paginated list of matching users.
         ```json
-        [
-            {
-                "type": "student",
-                "email": "student@email.com",
-                "faculty": "Science",
-                "department": "Mathematics",
-                "name": "John Doe",
-                "display_name_slug": "john-doe-1"
-            },
-            {
-                "type": "organization",
-                "email": "org@email.com",
-                "organization_name": "Varsigram Inc",
-                "display_name_slug": "varsigram-inc-1",
-                "exclusive": true
-            }
-        ]
+        {
+            "count": 42,
+            "next": "http://api.varsigram.com/users/search/?page=2",
+            "previous": null,
+            "results": [
+                {
+                    "type": "student",
+                    "email": "student@email.com",
+                    "faculty": "Science",
+                    "department": "Mathematics",
+                    "name": "John Doe",
+                    "display_name_slug": "john-doe-1"
+                },
+                {
+                    "type": "organization",
+                    "email": "org@email.com",
+                    "organization_name": "Varsigram Inc",
+                    "display_name_slug": "varsigram-inc-1",
+                    "exclusive": true
+                }
+            ]
+        }
         ```
-    *   Response (400 Bad Request): If no valid filter is provided.
+      * **Response (400 Bad Request)**: If no valid filter is provided.
         ```json
         {
             "message": "Provide at least \"query\", \"faculty\", or \"department\"."
         }
         ```
-    *   Response (200 OK, empty): If no users match the search.
-        ```json
-        []
-        ```
 
-**Notes:**
-- The endpoint searches both students and organizations and combines results.
-- For students, you can filter by `faculty`, `department`, or `query`.
-- For organizations, only `query` is supported for filtering.
-- All searches are case-insensitive and support partial matches.
-- The `type` field in each result indicates whether
+-----
 
+  * **Mandatory Filter Note**: You **must** provide at least one of the following query parameters: `query`, `faculty`, or `department`.
+  * **Combined Results**: The endpoint searches both students and organizations and combines results into a single list before pagination.
+  * **Filtering Logic**:
+      * For students, you can filter by `faculty`, `department`, or `query` (on `name`).
+      * For organizations, only `query` (on `organization_name`) is supported for filtering.
+  * **Search Type**: All searches are **case-insensitive** and support **partial matches**.
+  * **Pagination**: The default page size is **10**, and the maximum allowed page size is **50**.
 
 *   **`POST /deactivate/`**  [name='user-deactivate']
 
