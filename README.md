@@ -952,6 +952,84 @@ Most endpoints require authentication. Authentication is handled using token-bas
 - Unregistering a device disables notifications for that device only.
 - Only the authenticated user can register or unregister their own devices.
 
+**NOTIFICATION DATA PAYLOAD**
+
+## I. Standard Payload Fields
+
+All notifications contain these fields, with the required values being context-specific. The client should primarily use the **`type`** field to determine the necessary routing logic.
+
+| Field Name | Type | Description | Purpose for Client Routing |
+| :--- | :--- | :--- | :--- |
+| **`type`** | `string` | Defines the specific **event** that occurred (e.g., `'comment'`, `'like'`, `'follow'`, `'new_post'`). | **Primary discriminator** for client-side routing logic. |
+| **`post_id`** | `string` | The **Firestore ID** of the target post. | Used to build the deep-link path: `/posts/:post_id`. |
+| **`comment_id`** | `string` | The **Firestore ID** of a new comment or reply. | **Contextual cue**: Used to scroll to or highlight the specific comment on the Post Screen. |
+| **`follower_id`** | `string` | The **PostgreSQL ID** of the user who initiated a follow. | Used for redirection to a User Profile Screen: `/profile/:user_id`. |
+| **`commenter_id` / `liker_id`** | `string` | PostgreSQL ID of the user who performed the action. | Used for display or secondary profile lookup. |
+
+---
+
+## II. Client Redirection Logic by Event Type
+
+The client application's router should switch on the value of the **`type`** field to determine the correct target route.
+
+### 1. New Comment or Reply (`type: 'comment'` or `'reply'`)
+
+This notification redirects the user to the parent post and highlights the new comment.
+
+| Field Used | Action | Client Route Structure |
+| :--- | :--- | :--- |
+| **`post_id`** | Direct to the Post Screen. | `/posts/:post_id` |
+| **`comment_id`** | Pass as a query parameter for scrolling/highlighting. | `?commentId=:comment_id` |
+
+**Example Server Payload:**
+```json
+{
+    "type": "comment",
+    "post_id": "fskj34klj5h6g7f8d9s0a1",
+    "comment_id": "a1b2c3d4e5f6g7h8i9j0k1",
+    "commenter_id": "23456789-abcd-efgh-ijkl-1234567890ab"
+}
+
+### 2. Post Like or New Post (type: 'like' or 'new_post')
+
+These actions redirect the user directly to the target post.
+
+Field Used	Action	Client Route Structure
+post_id	Direct to the Post Screen.	/posts/:post_id
+
+
+**Example Server Payload (Like):**
+
+
+```json
+{
+    "type": "like",
+    "post_id": "fskj34klj5h6g7f8d9s0a1",
+    "liker_id": "23456789-abcd-efgh-ijkl-1234567890ab" 
+}
+
+### 3. New Follow (type: 'follow')
+
+This action redirects the user to the profile of the user who initiated the follow (the follower).
+
+Field Used	Action	Client Route Structure
+follower_id	Direct to the User Profile Screen.	/profile/:follower_id
+
+
+**Example Server Payload:**
+
+```json
+{
+    "type": "follow",
+    "follower_id": "12345678-abcd-efgh-ijkl-000000000001"
+}
+
+## III. Client Implementation Notes
+- Prioritization: The client should prioritize deep-linking based on the presence of the necessary ID fields. The check should prioritize follower_id for 'follow' events, and post_id for all others.
+
+- Route Construction: The client must dynamically construct the route path, appending optional query parameters (?commentId=...) only when the corresponding ID is present.
+
+- Fallback: If the notification data lacks the required ID for a deep link, the application should fall back to a safe route, such as the main /notifications screen or the Home Feed.
 
 
 
