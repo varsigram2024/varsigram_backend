@@ -253,9 +253,11 @@ class GenericFollowSerializer(serializers.ModelSerializer):
         if follower_type.lower() == 'student':
             follower_id = Student.objects.get(user_id=follower_user_id).id
             follower_name = Student.objects.get(user_id=follower_user_id).name
+            follower_display_name_slug = Student.objects.get(user_id=follower_user_id).display_name_slug
         elif follower_type.lower() == 'organization':
             follower_id = Organization.objects.get(user_id=follower_user_id).id
             follower_name = Organization.objects.get(user_id=follower_user_id).organization_name
+            follower_display_name_slug = Organization.objects.get(user_id=follower_user_id).display_name_slug
         else:
             raise serializers.ValidationError("Invalid follower_type")
 
@@ -287,6 +289,7 @@ class GenericFollowSerializer(serializers.ModelSerializer):
         if created and followee_user.id != follower_user_id:
             # Get the name of the follower (the person who just followed)
             follower_name = ""
+            follower_display_name_slug = ""
             if hasattr(self.context['request'].user, 'student'):
                 follower_name = self.context['request'].user.student.name
                 follower_display_name_slug = self.context['request'].user.student.display_name_slug
