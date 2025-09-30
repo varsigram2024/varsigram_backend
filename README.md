@@ -1013,7 +1013,7 @@ post_id	Direct to the Post Screen.	/posts/:post_id
 This action redirects the user to the profile of the user who initiated the follow (the follower).
 
 Field Used	Action	Client Route Structure
-follower_id	Direct to the User Profile Screen.	/profile/:follower_id
+follower_display_name_slug	Direct to the User Profile Screen.	/profile/:follower_display_name_slug
 
 
 **Example Server Payload:**
@@ -1021,7 +1021,9 @@ follower_id	Direct to the User Profile Screen.	/profile/:follower_id
 ```json
 {
     "type": "follow",
-    "follower_id": "12345678-abcd-efgh-ijkl-000000000001"
+    "follower_id": "12345678-abcd-efgh-ijkl-000000000001",
+    "follower_name": "ashdcugwiugwrf",
+    "follower_display_name_slug": "dshwydyd-1"
 }
 
 ## III. Client Implementation Notes

@@ -289,10 +289,13 @@ class GenericFollowSerializer(serializers.ModelSerializer):
             follower_name = ""
             if hasattr(self.context['request'].user, 'student'):
                 follower_name = self.context['request'].user.student.name
+                follower_display_name_slug = self.context['request'].user.student.display_name_slug
             elif hasattr(self.context['request'].user, 'organization'):
                 follower_name = self.context['request'].user.organization.organization_name
+                follower_display_name_slug = self.context['request'].user.organization.display_name_slug
             else:
                 follower_name = self.context['request'].user.email
+                follower_display_name_slug = None
 
             send_push_notification(
                 user=followee_user, # The user who is being followed
@@ -301,6 +304,8 @@ class GenericFollowSerializer(serializers.ModelSerializer):
                 data={
                     "type": "follow",
                     "follower_id": follower_user_id,
+                    "follower_name": follower_name,
+                    "follower_display_name_slug": follower_display_name_slug,
                 }
             )
         
