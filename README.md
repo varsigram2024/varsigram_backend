@@ -144,54 +144,63 @@ Most endpoints require authentication. Authentication is handled using token-bas
     *   Authentication: Required
     *   Response (200 OK): Returns user profile data and profile type.
 
-*   **`GET /users/search/`**  [name='user-search']
+-----
 
-    *   Description: Search for users (students or organizations) using filters such as name, faculty, and department.  
-        This endpoint searches both Students and Organizations models and returns a unified result set.
-    *   Request: `GET`
-    *   Authentication: Required (JWT)
-    *   Query Parameters:
-        *   `query`: (optional) Search by student name or organization name (case-insensitive, partial match).
-        *   `faculty`: (optional, students only) Filter by faculty name (case-insensitive).
-        *   `department`: (optional, students only) Filter by department name (case-insensitive).
-    *   Response (200 OK): Returns a list of matching users.
+## 🌐 API Endpoint Documentation: User Search
+
+  * **`GET /users/search/`**  \[name='user-search']
+
+      * **Description**: Search for users (students or organizations) using filters such as name, faculty, and department. This endpoint searches both **Student** and **Organization** models and returns a unified, **paginated** result set.
+      * **Request**: `GET`
+      * **Authentication**: Required (**JWT**)
+      * **Permissions**: `IsAuthenticated`
+      * **Query Parameters**:
+          * `query`: (**Optional** $\\rightarrow$ see **Mandatory Filter Note**) Search by student name or organization name (**case-insensitive, partial match**).
+          * `faculty`: (**Optional**, students only) Filter by student's faculty name (**case-insensitive, partial match**).
+          * `department`: (**Optional**, students only) Filter by student's department name (**case-insensitive, partial match**).
+          * `page`: (Optional) The page number to retrieve. Defaults to **1**.
+          * `page_size`: (Optional) Custom page size. Max size is **50**. Defaults to **10**.
+      * **Response (200 OK)**: Returns a paginated list of matching users.
         ```json
-        [
-            {
-                "type": "student",
-                "email": "student@email.com",
-                "faculty": "Science",
-                "department": "Mathematics",
-                "name": "John Doe",
-                "display_name_slug": "john-doe-1"
-            },
-            {
-                "type": "organization",
-                "email": "org@email.com",
-                "organization_name": "Varsigram Inc",
-                "display_name_slug": "varsigram-inc-1",
-                "exclusive": true
-            }
-        ]
+        {
+            "count": 42,
+            "next": "http://api.varsigram.com/users/search/?page=2",
+            "previous": null,
+            "results": [
+                {
+                    "type": "student",
+                    "email": "student@email.com",
+                    "faculty": "Science",
+                    "department": "Mathematics",
+                    "name": "John Doe",
+                    "display_name_slug": "john-doe-1"
+                },
+                {
+                    "type": "organization",
+                    "email": "org@email.com",
+                    "organization_name": "Varsigram Inc",
+                    "display_name_slug": "varsigram-inc-1",
+                    "exclusive": true
+                }
+            ]
+        }
         ```
-    *   Response (400 Bad Request): If no valid filter is provided.
+      * **Response (400 Bad Request)**: If no valid filter is provided.
         ```json
         {
             "message": "Provide at least \"query\", \"faculty\", or \"department\"."
         }
         ```
-    *   Response (200 OK, empty): If no users match the search.
-        ```json
-        []
-        ```
 
-**Notes:**
-- The endpoint searches both students and organizations and combines results.
-- For students, you can filter by `faculty`, `department`, or `query`.
-- For organizations, only `query` is supported for filtering.
-- All searches are case-insensitive and support partial matches.
-- The `type` field in each result indicates whether
+-----
 
+  * **Mandatory Filter Note**: You **must** provide at least one of the following query parameters: `query`, `faculty`, or `department`.
+  * **Combined Results**: The endpoint searches both students and organizations and combines results into a single list before pagination.
+  * **Filtering Logic**:
+      * For students, you can filter by `faculty`, `department`, or `query` (on `name`).
+      * For organizations, only `query` (on `organization_name`) is supported for filtering.
+  * **Search Type**: All searches are **case-insensitive** and support **partial matches**.
+  * **Pagination**: The default page size is **10**, and the maximum allowed page size is **50**.
 
 *   **`POST /deactivate/`**  [name='user-deactivate']
 
@@ -943,6 +952,86 @@ Most endpoints require authentication. Authentication is handled using token-bas
 - Unregistering a device disables notifications for that device only.
 - Only the authenticated user can register or unregister their own devices.
 
+**NOTIFICATION DATA PAYLOAD**
+
+## I. Standard Payload Fields
+
+All notifications contain these fields, with the required values being context-specific. The client should primarily use the **`type`** field to determine the necessary routing logic.
+
+| Field Name | Type | Description | Purpose for Client Routing |
+| :--- | :--- | :--- | :--- |
+| **`type`** | `string` | Defines the specific **event** that occurred (e.g., `'comment'`, `'like'`, `'follow'`, `'new_post'`). | **Primary discriminator** for client-side routing logic. |
+| **`post_id`** | `string` | The **Firestore ID** of the target post. | Used to build the deep-link path: `/posts/:post_id`. |
+| **`comment_id`** | `string` | The **Firestore ID** of a new comment or reply. | **Contextual cue**: Used to scroll to or highlight the specific comment on the Post Screen. |
+| **`follower_id`** | `string` | The **PostgreSQL ID** of the user who initiated a follow. | Used for redirection to a User Profile Screen: `/profile/:user_id`. |
+| **`commenter_id` / `liker_id`** | `string` | PostgreSQL ID of the user who performed the action. | Used for display or secondary profile lookup. |
+
+---
+
+## II. Client Redirection Logic by Event Type
+
+The client application's router should switch on the value of the **`type`** field to determine the correct target route.
+
+### 1. New Comment or Reply (`type: 'comment'` or `'reply'`)
+
+This notification redirects the user to the parent post and highlights the new comment.
+
+| Field Used | Action | Client Route Structure |
+| :--- | :--- | :--- |
+| **`post_id`** | Direct to the Post Screen. | `/posts/:post_id` |
+| **`comment_id`** | Pass as a query parameter for scrolling/highlighting. | `?commentId=:comment_id` |
+
+**Example Server Payload:**
+```json
+{
+    "type": "comment",
+    "post_id": "fskj34klj5h6g7f8d9s0a1",
+    "comment_id": "a1b2c3d4e5f6g7h8i9j0k1",
+    "commenter_id": "23456789-abcd-efgh-ijkl-1234567890ab"
+}
+
+### 2. Post Like or New Post (type: 'like' or 'new_post')
+
+These actions redirect the user directly to the target post.
+
+Field Used	Action	Client Route Structure
+post_id	Direct to the Post Screen.	/posts/:post_id
+
+
+**Example Server Payload (Like):**
+
+
+```json
+{
+    "type": "like",
+    "post_id": "fskj34klj5h6g7f8d9s0a1",
+    "liker_id": "23456789-abcd-efgh-ijkl-1234567890ab" 
+}
+
+### 3. New Follow (type: 'follow')
+
+This action redirects the user to the profile of the user who initiated the follow (the follower).
+
+Field Used	Action	Client Route Structure
+follower_display_name_slug	Direct to the User Profile Screen.	/profile/:follower_display_name_slug
+
+
+**Example Server Payload:**
+
+```json
+{
+    "type": "follow",
+    "follower_id": "12345678-abcd-efgh-ijkl-000000000001",
+    "follower_name": "ashdcugwiugwrf",
+    "follower_display_name_slug": "dshwydyd-1"
+}
+
+## III. Client Implementation Notes
+- Prioritization: The client should prioritize deep-linking based on the presence of the necessary ID fields. The check should prioritize follower_id for 'follow' events, and post_id for all others.
+
+- Route Construction: The client must dynamically construct the route path, appending optional query parameters (?commentId=...) only when the corresponding ID is present.
+
+- Fallback: If the notification data lacks the required ID for a deep link, the application should fall back to a safe route, such as the main /notifications screen or the Home Feed.
 
 
 
