@@ -144,11 +144,17 @@ SIMPLE_JWT = {
 
 #Email Configuration (common parts, sensitive parts in production.py)
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.sendgrid.net'
-EMAIL_PORT = 587
-EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
-EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', default=None)  # Ensure this is set in your environment
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', default='noreply@yourdomain.com')
+# EMAIL_HOST = 'smtp.sendgrid.net'
+# EMAIL_PORT = 587
+# EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
+# EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', default=None)  # Ensure this is set in your environment
+# DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', default='noreply@yourdomain.com')
+EMAIL_HOST = os.environ.get('MAIL_HOST', default='smtp.mailersend.net')
+EMAIL_PORT = int(os.environ.get('MAIL_PORT', default=587))
+EMAIL_HOST_USER = os.environ.get('MAIL_USERNAME', default=None)
+EMAIL_HOST_PASSWORD = os.environ.get('MAIL_PASSWORD', default=None)  # Ensure this is set in your environment
+DEFAULT_FROM_EMAIL = os.environ.get('MAIL_FROM_ADDRESS', default='no-reply@varsigram.com')
+MAIL_FROM_NAME = os.environ.get('MAIL_FROM_NAME', default='Varsigram Support Team')
 
 
 # Password validation
