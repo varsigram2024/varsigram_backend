@@ -103,60 +103,80 @@ class UserLogout(APIView):
         msg = {'message': 'Logged Out Successfully'}
         return Response(data=msg, status=status.HTTP_200_OK)
 
+# User = get_user_model()
+
+
 class PasswordResetView(generics.GenericAPIView):
-    """ Send password reset link to user email """
+    """ 
+    Handles the request to send the password reset link.
+    It returns a success response regardless of user existence to prevent enumeration.
+    """
     permission_classes = []
     serializer_class = PasswordResetSerializer
 
     def post(self, request):
         serializer = self.serializer_class(data=request.data)
+        
+        # 1. Validate the email format and basic data structure
         if serializer.is_valid(raise_exception=True):
+            
+            # 2. Call the save method, which handles the security check (user exists?) 
+            # and sends the email (or fails silently).
             serializer.save(request=request)
-            return Response({"message": "Password reset link sent successfully"}, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            # 3. Return a generic success message for security (prevents user enumeration).
+            return Response(
+                {"message": "If an account with that email exists, a password reset link has been sent."}, 
+                status=status.HTTP_200_OK
+            )
+        # DRF's raise_exception=True already handles 400 errors, but kept for clarity
+        # return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class PasswordResetConfirmView(generics.GenericAPIView):
-    """ Reset user password """
-    permission_classes = [] # Allow unauthenticated access
+    """ 
+    View to handle both link validity check (GET) and password change (POST). 
+    """
+    permission_classes = [] 
     serializer_class = PasswordResetConfirmSerializer
-    User = get_user_model() # Make sure User model is defined
+    User = get_user_model() 
 
     def get(self, request, *args, **kwargs):
-        # This method should remain as the last version I provided,
-        # which validates uid and token using Django's PasswordResetTokenGenerator
-        # and returns "Validation Successful".
-        # It's primarily for the frontend to check link validity upon page load.
+        """ Checks the validity of the UID and Token upon frontend page load. """
 
-        uidb64 = request.GET.get('uid')
-        token = request.GET.get('token')
+        uidb64 = request.query_params.get('uid')
+        token = request.query_params.get('token')
 
         if not uidb64 or not token:
-            return Response({"error": "Missing UID or Token"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Missing UID or Token in query parameters."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             user_id = urlsafe_base64_decode(uidb64).decode()
             user = self.User.objects.get(pk=user_id)
         except (TypeError, ValueError, OverflowError, self.User.DoesNotExist):
-            user = None
-
-        if user is None:
-            return Response({"error": "Invalid User ID or Link"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Invalid User ID or Reset Link."}, status=status.HTTP_400_BAD_REQUEST)
 
         token_generator = PasswordResetTokenGenerator()
         if not token_generator.check_token(user, token):
-            return Response({"error": "Invalid or Expired Token"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Invalid or Expired Token."}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Successful validation means the link is live and user can proceed
         return Response({"message": "Validation Successful"}, status=status.HTTP_200_OK)
 
 
     def post(self, request, *args, **kwargs):
-        # The serializer now handles uid and token extraction/validation
-        serializer = self.serializer_class(data=request.data)
+        """ Sets the new password after successful validation. """
+        
+        # --- CRITICAL CORRECTION: Inject UID and Token from URL into request data ---
+        data = request.data.copy()
+        data['uid'] = request.query_params.get('uid')
+        data['token'] = request.query_params.get('token')
+        
+        serializer = self.serializer_class(data=data)
+        
         if serializer.is_valid(raise_exception=True):
-            serializer.save() # The serializer handles setting the new password
-            return Response({"message": "Password reset successful"}, status=status.HTTP_200_OK)
-        # If serializer is not valid, DRF's raise_exception=True will handle the error response automatically
-        # No need for: return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            serializer.save() 
+            return Response({"message": "Password reset successful."}, status=status.HTTP_200_OK)
 
 class ChangePasswordView(generics.GenericAPIView):
     """ Change user password """
