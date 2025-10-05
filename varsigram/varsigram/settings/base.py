@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
+# import logging
 
 # Load .env variables for local development.
 # In production, environment variables will be set by the CI/CD system or server config.
@@ -142,6 +143,13 @@ SIMPLE_JWT = {
     'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
 }
 
+# TEMPORARY DEBUG:
+
+# logger = logging.getLogger(__name__)
+# logger.critical(f"DEBUG: EMAIL_HOST is set to: {os.environ.get('MAIL_HOST', 'default was used')}")
+# logger.critical(f"DEBUG: EMAIL_PORT is set to: {os.environ.get('MAIL_PORT', 'default was used')}")
+# logger.critical(f"DEBUG: EMAIL_HOST_USER is set to: {os.environ.get('MAIL_USERNAME', 'default was used')}")
+# logger.critical(f"DEBUG: DEFAULT_FROM_EMAIL is set to: {os.environ.get('MAIL_FROM_ADDRESS', 'default was used')}")
 #Email Configuration (common parts, sensitive parts in production.py)
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 # EMAIL_HOST = 'smtp.sendgrid.net'

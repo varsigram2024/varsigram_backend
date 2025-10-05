@@ -34,7 +34,7 @@ CORS_ALLOWED_ORIGINS = [
 
 # For local development, you might want to print emails to console
 # EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
+# EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
 
 # Celery for local development might use a local RabbitMQ or Redis
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', default='redis://localhost:6379/0')
