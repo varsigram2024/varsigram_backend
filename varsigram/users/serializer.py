@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework import serializers
 from .models import User, Student, Organization
 from django.contrib.auth import authenticate
@@ -234,68 +235,101 @@ class LoginSerializer(serializers.Serializer):
         return response_data
 
 
+# --- Password Reset Request (Email Submission) ---
+
 class PasswordResetSerializer(serializers.Serializer):
+    """
+    Handles the request to start the password reset process.
+    The validation is designed to prevent user enumeration attacks.
+    """
     email = serializers.EmailField()
 
     def validate_email(self, value):
-        """ Check if the user exists """
-        if not User.objects.filter(email=value).exists():
-            raise serializers.ValidationError("User does not exist")
+        """
+        We perform minimal validation here. The security check (user existence)
+        is moved to the save method to prevent email enumeration.
+        """
         return value
 
-    def save(self, request): # Keep request argument, it's good practice for context
-        """ Generates a reset link and sends an email using Django's token """
+    def save(self, request):
+        """
+        Generates a reset link and sends an email.
+        This method will fail silently if the user is not found.
+        """
         email = self.validated_data['email']
-        user = User.objects.get(email=email)
+        
+        try:
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            # CRITICAL SECURITY STEP: Fail silently to prevent user enumeration.
+            # The view should return a generic success message (HTTP 200/204) 
+            # regardless of whether the email was found.
+            print(f"Password reset requested for non-existent email: {email}. Failing silently.")
+            return
 
-
-        # Generate token using Django's PasswordResetTokenGenerator
+        # 1. Generate token and UID
         token_generator = PasswordResetTokenGenerator()
         token = token_generator.make_token(user)
-
-
         uid = urlsafe_base64_encode(force_bytes(user.id))
-        # Ensure DOMAIN is set in your environment variables for production/staging
-        frontend_url = f"{os.getenv('FRONTEND_DOMAIN')}/reset-password" # Use os.getenv and a more descriptive env var name
 
-        reset_link = f"{frontend_url}?uid={uid}&token={token}"
-        # Assuming send_reset_email is a Celery task or similar
-        # Ensure your email template mentions that this link is time-sensitive.
-        # You might pass the request for site name in email context
-        send_reset_email.delay(email, reset_link) # Pass token and uid as well if your email needs them separately
+        # 2. Construct the reset link using Django Settings for domain
+        # Ensure 'FRONTEND_DOMAIN' is defined in your settings.py (e.g., https://app.varsigram.com)
+        try:
+            frontend_domain = settings.FRONTEND_DOMAIN
+        except AttributeError:
+            # Fallback for development, but recommend using settings.
+            frontend_domain = os.getenv('FRONTEND_DOMAIN', 'http://localhost:3000') 
 
+        reset_link = f"{frontend_domain}/reset-password?uid={uid}&token={token}"
+
+        # 3. Send Email (using Celery task or direct call)
+        # username = user.student.name if hasattr(user, 'student') else user.organization.name if hasattr(user, 'organization') else "User"
+        # Assuming send_reset_email.delay is available:
+        send_reset_email.delay(email, reset_link)
+        print(f"DEBUG: Sending reset link to {email}: {reset_link}")
+
+
+# --- Password Reset Confirmation (New Password Submission) ---
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
+    """
+    Handles the submission of the new password along with the UID and token.
+    """
     new_password = serializers.CharField(write_only=True, min_length=8)
     confirm_password = serializers.CharField(write_only=True)
-    # Add uid and token as fields that the serializer expects from the client
+    # These fields must be passed to the serializer by the view (usually from URL query params)
     uid = serializers.CharField(required=True)
     token = serializers.CharField(required=True)
 
 
     def validate(self, data):
-        """ Validates the token, UID, and password match. """
+        """ Validates the password match, token, and UID. """
         new_password = data['new_password']
         confirm_password = data['confirm_password']
         uidb64 = data['uid']
         token = data['token']
 
+        # 1. Password Match Check
         if new_password != confirm_password:
-            raise serializers.ValidationError({"new_password": "Passwords do not match"})
+            raise serializers.ValidationError({"confirm_password": _("Passwords do not match.")})
 
+        # 2. UID Decode and User Retrieval
         try:
-            # Decode UID and get user
             user_id = urlsafe_base64_decode(uidb64).decode()
             user = User.objects.get(pk=user_id)
         except (TypeError, ValueError, OverflowError, User.DoesNotExist):
-            raise serializers.ValidationError({'uid': _('Invalid User ID or reset link.')})
+            # General error for security/obscurity if UID is tampered with
+            raise serializers.ValidationError({'uid': _('Invalid reset link or User ID.')})
 
-        # Validate the token using Django's PasswordResetTokenGenerator
+        # 3. Token Validation
         token_generator = PasswordResetTokenGenerator()
         if not token_generator.check_token(user, token):
+            # This check handles two critical things:
+            # a) The token is past the settings.PASSWORD_RESET_TIMEOUT (default 3 days).
+            # b) The user's password hash has changed since the token was created (e.g., they already used the link).
             raise serializers.ValidationError({'token': _('Invalid or expired token.')})
 
-        # Optional: Add Django's password validation rules (if configured in AUTH_PASSWORD_VALIDATORS)
+        # Optional: Add Django's complex password validation rules (if configured)
         # from django.contrib.auth.password_validation import validate_password
         # try:
         #     validate_password(new_password, user=user)
@@ -303,15 +337,17 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         #     raise serializers.ValidationError({'new_password': list(e.messages)})
 
 
-        self.user = user # Store user for use in save method
+        self.user = user # Store the valid user instance for the save method
         return data
 
     def save(self):
-        """ Update the user's password """
-        # self.user is set in the validate method
-        self.user.set_password(self.validated_data['new_password']) # Use set_password to hash
+        """ Update the user's password using the set_password helper. """
+        self.user.set_password(self.validated_data['new_password']) 
         self.user.save()
-        return self.user # Return the user instance
+        
+        # NOTE: Changing the password invalidates the current password reset token
+        # and logs the user out of all sessions (Django default behavior).
+        return self.user
 
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True)
