@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
+# import logging
 
 # Load .env variables for local development.
 # In production, environment variables will be set by the CI/CD system or server config.
@@ -142,13 +143,26 @@ SIMPLE_JWT = {
     'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
 }
 
+# TEMPORARY DEBUG:
+
+# logger = logging.getLogger(__name__)
+# logger.critical(f"DEBUG: EMAIL_HOST is set to: {os.environ.get('MAIL_HOST', 'default was used')}")
+# logger.critical(f"DEBUG: EMAIL_PORT is set to: {os.environ.get('MAIL_PORT', 'default was used')}")
+# logger.critical(f"DEBUG: EMAIL_HOST_USER is set to: {os.environ.get('MAIL_USERNAME', 'default was used')}")
+# logger.critical(f"DEBUG: DEFAULT_FROM_EMAIL is set to: {os.environ.get('MAIL_FROM_ADDRESS', 'default was used')}")
 #Email Configuration (common parts, sensitive parts in production.py)
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = 'smtp.sendgrid.net'
-EMAIL_PORT = 587
-EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
-EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', default=None)  # Ensure this is set in your environment
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', default='noreply@yourdomain.com')
+# EMAIL_HOST = 'smtp.sendgrid.net'
+# EMAIL_PORT = 587
+# EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER')
+# EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', default=None)  # Ensure this is set in your environment
+# DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', default='noreply@yourdomain.com')
+EMAIL_HOST = os.environ.get('MAIL_HOST', default='smtp.mailersend.net')
+EMAIL_PORT = int(os.environ.get('MAIL_PORT', default=587))
+EMAIL_HOST_USER = os.environ.get('MAIL_USERNAME', default=None)
+EMAIL_HOST_PASSWORD = os.environ.get('MAIL_PASSWORD', default=None)  # Ensure this is set in your environment
+DEFAULT_FROM_EMAIL = os.environ.get('MAIL_FROM_ADDRESS', default='no-reply@varsigram.com')
+MAIL_FROM_NAME = os.environ.get('MAIL_FROM_NAME', default='Varsigram Support Team')
 
 
 # Password validation
