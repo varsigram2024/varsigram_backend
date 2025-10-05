@@ -283,8 +283,9 @@ class PasswordResetSerializer(serializers.Serializer):
         reset_link = f"{frontend_domain}/reset-password?uid={uid}&token={token}"
 
         # 3. Send Email (using Celery task or direct call)
+        # username = user.student.name if hasattr(user, 'student') else user.organization.name if hasattr(user, 'organization') else "User"
         # Assuming send_reset_email.delay is available:
-        # send_reset_email.delay(email, reset_link, user.first_name)
+        send_reset_email.delay(email, reset_link)
         print(f"DEBUG: Sending reset link to {email}: {reset_link}")
 
 
