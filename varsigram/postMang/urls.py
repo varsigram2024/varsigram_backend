@@ -6,14 +6,14 @@ from .views import (
     UserPostsFirestoreView, FeedView,
     WhoToFollowView, ExclusiveOrgsRecentPostsView,
     VerifiedOrgBadge, BatchPostViewIncrementAPIView,
-    RewardPointCreateView, PrivatePointsProfileView
+    RewardPointSubmitView, UserPointsDetailView,
 )
 
 app_name = 'postMang'
 
 urlpatterns = [
-    path('reward-points/', RewardPointCreateView.as_view(), name='reward-points'),
-    path('mypoints/', PrivatePointsProfileView.as_view(), name='private-points-profile'),
+    path('reward-points/', RewardPointSubmitView.as_view(), name='reward-points'),
+    path('profile/points/<int:pk>/', UserPointsDetailView.as_view(), name='profile-points-public'),
     path('posts/batch-view/', BatchPostViewIncrementAPIView.as_view(), name='batch-view'),
     path('posts/', PostListCreateFirestoreView.as_view(), name='post-list-create'),
     path('posts/<str:post_id>/', PostDetailFirestoreView.as_view(), name='post-detail'),

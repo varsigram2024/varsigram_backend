@@ -15,6 +15,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from notifications_app.tasks import notify_all_users_new_post
+from rest_framework.mixins import CreateModelMixin
 from notifications_app.utils import send_push_notification
 
 
@@ -1293,30 +1294,32 @@ class LikeListFirestoreView(APIView):
             return Response({"error": f"Failed to retrieve likes: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-class RewardPointCreateView(generics.CreateAPIView):
-    """
-    Endpoint for POSTing a reward transaction.
-    POST /api/rewards/submit/
-    Data: {"post_id": "firestore_id_123", "points": 5}
-    """
+class RewardPointSubmitView(generics.GenericAPIView, CreateModelMixin): # Rename and use GenericAPIView + Mixin
+
     serializer_class = RewardPointSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    # The POST method is handled by the CreateModelMixin, 
+    # and the Serializer's create method handles the UPSERT logic via IntegrityError.
+    def post(self, request, *args, **kwargs):
+        return self.create(request, *args, **kwargs)
 
-class PrivatePointsProfileView(generics.RetrieveAPIView):
+
+class UserPointsDetailView(generics.RetrieveAPIView):
     """
-    Endpoint to retrieve the authenticated user's total received points.
-    GET /api/profile/points/
+    Endpoint to retrieve the total points received by ANY user, 
+    identified by their primary key (pk) in the URL.
     """
     serializer_class = PrivatePointsProfileSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_object(self):
-        """ 
-        Ensures the data returned is ONLY for the currently logged-in user. 
-        This enforces the privacy requirement.
-        """
-        return self.request.user
+    
+    # Authentication is still required to access the API (if you want to prevent
+    # unauthenticated crawling), but we remove the strict privacy enforcement 
+    # of the previous version.
+    permission_classes = [permissions.IsAuthenticated] 
+    
+    # Specify the queryset so DRF knows where to look for the object
+    queryset = User.objects.all() 
+    
 
 # class TrendingPostsFirestoreView(generics.ListAPIView):
 #     """

@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from users.serializer import UserSerializer, OrganizationProfileSerializer, StudentProfileSerializer
 from .models import Follow, RewardPointTransaction
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
 from users.models import Student, Organization
 from rest_framework import serializers
 import logging
@@ -369,8 +370,35 @@ class RewardPointSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
+        # Set the giver from the request context
         validated_data['giver'] = self.context['request'].user
-        return RewardPointTransaction.objects.create(**validated_data)
+        
+        # Define the unique fields used for the lookup
+        unique_fields = {
+            'giver': validated_data['giver'],
+            'firestore_post_id': validated_data['firestore_post_id']
+        }
+        
+        try:
+            # Attempt to create a new transaction (INSERT)
+            instance = RewardPointTransaction.objects.create(**validated_data)
+            return instance
+            
+        except IntegrityError:
+            # If IntegrityError (due to UniqueConstraint) is raised, UPDATE the existing record instead (UPSERT)
+            try:
+                instance = RewardPointTransaction.objects.get(**unique_fields)
+                
+                # Perform the update
+                instance.points = validated_data['points']
+                # The post_author, giver, and firestore_post_id fields should not change, but setting the point value is the goal.
+                instance.save()
+                
+                return instance
+            
+            except RewardPointTransaction.DoesNotExist:
+                # Should not happen if IntegrityError was raised, but good practice
+                raise serializers.ValidationError({"detail": "Failed to update existing reward record."})
 
 
 class PrivatePointsProfileSerializer(serializers.ModelSerializer):
