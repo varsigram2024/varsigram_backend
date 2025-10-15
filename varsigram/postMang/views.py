@@ -5,7 +5,7 @@ from rest_framework import status
 from firebase_admin import firestore
 from postMang.apps import get_firestore_db  # Import the Firestore client from the app config
 from .models import (User, Follow, Student, Organization)
-from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, GenericFollowSerializer
+from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, GenericFollowSerializer, RewardPointSerializer, PrivatePointsProfileSerializer
 from .utils import get_exclusive_org_user_ids, get_student_user_ids
 import logging
 import random
@@ -1292,6 +1292,31 @@ class LikeListFirestoreView(APIView):
             # Catch any other potential errors during Firestore interaction
             return Response({"error": f"Failed to retrieve likes: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+class RewardPointCreateView(generics.CreateAPIView):
+    """
+    Endpoint for POSTing a reward transaction.
+    POST /api/rewards/submit/
+    Data: {"post_id": "firestore_id_123", "points": 5}
+    """
+    serializer_class = RewardPointSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+
+class PrivatePointsProfileView(generics.RetrieveAPIView):
+    """
+    Endpoint to retrieve the authenticated user's total received points.
+    GET /api/profile/points/
+    """
+    serializer_class = PrivatePointsProfileSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        """ 
+        Ensures the data returned is ONLY for the currently logged-in user. 
+        This enforces the privacy requirement.
+        """
+        return self.request.user
 
 # class TrendingPostsFirestoreView(generics.ListAPIView):
 #     """

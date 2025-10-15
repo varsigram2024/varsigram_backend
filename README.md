@@ -1035,3 +1035,74 @@ follower_display_name_slug	Direct to the User Profile Screen.	/profile/:follower
 
 
 
+### Point Submission (RewardPointCreateView)
+
+    This is the endpoint where a user grants points to a post.
+
+    Detail	Description
+    Method	POST
+    URL	/api/rewards/submit/
+    Authentication	Required (User must be logged in)
+
+    1. Expected Request Payload (JSON)
+    The client sends the Firestore ID of the post and the integer point value.
+
+    JSON
+
+    {
+        "post_id": "firestore_post_xyz123",  
+        "points": 4 
+    }
+    post_id: The unique ID string of the post in your Firestore database.
+
+    points: The number of points given, must be an integer between 1 and 5.
+
+    2. Success Response (HTTP 201 Created)
+    The response confirms the transaction was saved and includes the transaction details.
+
+    JSON
+
+    {
+        "id": 15, // The ID of the newly created transaction in Postgres
+        "post_id": "firestore_post_xyz123", 
+        "points": 4
+        // Note: The giver ID and post_author ID are saved internally but often excluded from the response for brevity.
+    }
+    3. Error Response Examples (HTTP 400 Bad Request)
+    Scenario	Response JSON
+    Invalid Points	{"points": ["Points must be between 1 and 5."]}
+    Post Not Found (Firestore)	{"post_id": ["Post with ID 'firestore_post_xyz123' not found in Firestore."]}
+    Missing Auth ID	{"post_id": ["Post data is missing the required 'author_id' field."]}
+
+
+### Private Points Retrieval (PrivatePointsProfileView)
+    This is the private endpoint where the authenticated user checks their total score.
+
+    Detail	Description
+    Method	GET
+    URL	/api/profile/points/
+    Authentication	Required (User must be logged in)
+
+
+    1. Expected Request (No Body Required)
+    Since the view uses self.request.user, no data is submitted.
+
+    2. Success Response (HTTP 200 OK)
+    The response is a JSON object containing the user's details and their total accumulated score, visible only to them.
+
+    JSON
+
+    {
+        "id": 42, // The user's local Postgres ID
+        "username": "UserB",
+        "total_points_received": 156 // The total SUM of all points given to all their posts
+    }
+    3. Error Response (HTTP 401 Unauthorized)
+    If the user is not authenticated:
+
+    JSON
+
+    {
+        "detail": "Authentication credentials were not provided."
+    }
+

@@ -1,12 +1,16 @@
 from datetime import datetime, timezone
 from users.serializer import UserSerializer, OrganizationProfileSerializer, StudentProfileSerializer
-from .models import Follow
+from .models import Follow, RewardPointTransaction
+from django.contrib.auth import get_user_model
 from users.models import Student, Organization
 from rest_framework import serializers
 import logging
+from .utils import get_post_author_id_from_firestore
 from django.contrib.contenttypes.models import ContentType
 from notifications_app.utils import send_push_notification
 
+
+User = get_user_model()
 class FirestorePostCreateSerializer(serializers.Serializer):
     content = serializers.CharField(max_length=10000)
     slug = serializers.CharField(max_length=255, required=False, allow_blank=True, help_text="Optional URL-friendly slug for the post.")
@@ -313,3 +317,69 @@ class GenericFollowSerializer(serializers.ModelSerializer):
             )
         
         return follow
+    
+class RewardPointSerializer(serializers.ModelSerializer):
+    """
+    Serializer for creating a new RewardPointTransaction, integrating Firestore lookup.
+    """
+    post_id = serializers.CharField(
+        source='firestore_post_id', 
+        max_length=100, 
+        write_only=True,
+        label="Post ID"
+    )
+
+    class Meta:
+        model = RewardPointTransaction
+        fields = ('post_id', 'points')
+        read_only_fields = ('giver', 'post_author', 'created_at')
+
+    def validate_points(self, value):
+        # ... (Validation remains the same)
+        if not (1 <= value <= 5):
+            raise serializers.ValidationError("Points must be between 1 and 5.")
+        return value
+
+    def validate(self, data):
+        """ 
+        1. Look up Post Author in Firestore using the real SDK. 
+        2. Set the local `post_author` ForeignKey.
+        """
+        post_id = data['firestore_post_id']
+
+        try:
+            # This calls the function that uses the Firebase Admin SDK
+            author_id = get_post_author_id_from_firestore(post_id)
+        except serializers.ValidationError as e:
+             # Catch the ValidationErrors raised by the utility and re-raise them
+             raise e
+        # ------------------------------
+
+        # Get the actual local User instance using the retrieved ID
+        try:
+            author_user = User.objects.get(pk=author_id)
+        except User.DoesNotExist:
+            raise serializers.ValidationError(
+                {"post_id": "Post author does not exist in the local database. Data mismatch."}
+            )
+
+        # Attach the author user instance to the data for the create() method
+        data['post_author'] = author_user
+            
+        return data
+
+    def create(self, validated_data):
+        validated_data['giver'] = self.context['request'].user
+        return RewardPointTransaction.objects.create(**validated_data)
+
+
+class PrivatePointsProfileSerializer(serializers.ModelSerializer):
+    """
+    Serializer for the private profile endpoint, exposing total points received.
+    """
+    # Assumes 'total_received_points' property is defined on your User model
+    total_points_received = serializers.IntegerField(source='total_received_points', read_only=True)
+
+    class Meta:
+        model = get_user_model()
+        fields = ('id', 'email', 'total_points_received')

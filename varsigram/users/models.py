@@ -7,6 +7,7 @@ from django.utils import timezone
 from uuid import uuid4
 import random
 from django.core.exceptions import ValidationError
+from django.db.models import Sum
 
 class UserManager(BaseUserManager):
     """ Custom manager to exclude soft-deleted objects. and create user """
@@ -90,6 +91,18 @@ class User(AbstractBaseUser, PermissionsMixin):
         self.otp = f"{random.randint(100000, 999999)}"
         self.otp_expiry = timezone.now() + timezone.timedelta(minutes=10)
         self.save()
+    
+    @property
+    def total_received_points(self):
+        """ 
+        Calculates the total points the user has received across all their posts.
+        This uses the reverse relation 'received_rewards'.
+        """
+        # The author of the post is the current user (self)
+        return self.received_rewards.aggregate(
+            total=Sum('points')
+        )['total'] or 0
+
 
 class Student(models.Model):
     """ Model for Student related to User """
