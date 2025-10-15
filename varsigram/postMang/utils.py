@@ -1,6 +1,6 @@
 from rest_framework import permissions, serializers
 from .models import Organization, User
-from firebase_admin import firestore
+from postMang.apps import get_firestore_db
 
 # class IsOwnerOrReadOnly(permissions.BasePermission):
 #     """
@@ -37,9 +37,7 @@ def get_student_user_ids():
     student_user_ids_str = [str(uid) for uid in student_user_ids]
     return student_user_ids_str
 
-def get_firestore_client():
-    """Returns the Firestore client instance."""
-    return firestore.client()
+
 
 def get_post_author_id_from_firestore(post_id: str) -> int:
     """
@@ -52,7 +50,7 @@ def get_post_author_id_from_firestore(post_id: str) -> int:
     if not post_id:
         raise serializers.ValidationError("Post ID cannot be empty.")
 
-    db = get_firestore_client()
+    db = get_firestore_db()
     
     # ASSUMPTION: Your posts are in a collection named 'posts'
     # and the author's local Django User ID is stored in a field named 'author_id'.
