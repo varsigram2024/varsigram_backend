@@ -1098,3 +1098,50 @@ JSON
     "username": "UserB",
     "total_points_received": 156
 }
+
+
+1. Social Links Update
+This endpoint allows an authenticated user to update their social media and website links. It performs a partial update, meaning only the fields provided in the payload will be changed.
+
+Detail	Specification
+Name	user-social-links-update
+URL	/api/v1/profile/social-links/
+Method	PATCH
+Authentication	Required (IsAuthenticated)
+Logic	Updates the corresponding fields directly on the authenticated User model instance. Empty strings ("") in the request body are saved as None (clearing the link).
+Request Payload (PATCH Body)
+Field	Type	Description
+linkedin_url	string	The full URL for the user's LinkedIn profile.
+instagram_url	string	The full URL for the user's Instagram profile.
+twitter_url	string	The full URL for the user's X (Twitter) profile.
+website_url	string	The full URL for the user's personal/organization website.
+Example Request (PATCH):
+
+JSON
+
+{
+    "linkedin_url": "https://linkedin.com/in/varsigram_dev",
+    "instagram_url": "https://instagram.com/varsigram_official"
+}
+Success Response (HTTP 200 OK)
+The response returns the updated social link data for the authenticated user.
+
+JSON
+
+{
+    "linkedin_url": "https://linkedin.com/in/varsigram_dev",
+    "instagram_url": "https://instagram.com/varsigram_official",
+    "twitter_url": null,
+    "website_url": null
+}
+Error Response Example (HTTP 400 Bad Request)
+If an invalid URL format is submitted:
+
+JSON
+
+{
+    "linkedin_url": [
+        "Enter a valid URL."
+    ]
+}
+
