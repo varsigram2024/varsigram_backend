@@ -14,7 +14,7 @@ from .serializer import (
     RegisterSerializer, LoginSerializer, StudentUpdateSerializer, OrganizationUpdateSerializer,
     OrganizationProfileSerializer, StudentProfileSerializer,
     UserDeactivateSerializer, UserReactivateSerializer,
-    OTPVerificationSerializer, SendOTPSerializer
+    OTPVerificationSerializer, SendOTPSerializer, SocialLinksSerializer
 )
 # from django.core.mail import send_mail
 from .utils import clean_data
@@ -316,6 +316,25 @@ class UserSearchView(APIView):
         paginator = UserSearchPagination()
         paginated_results = paginator.paginate_queryset(results, request)
         return paginator.get_paginated_response(paginated_results)
+
+class SocialLinksUpdateView(generics.UpdateAPIView):
+    """
+    Allows the authenticated user to update their social links directly on their User model.
+    PATCH /api/v1/profile/social-links/
+    """
+    serializer_class = SocialLinksSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['patch'] # Only allow partial updates
+
+    def get_object(self):
+        """Always returns the currently authenticated User instance."""
+        return self.request.user
+
+    def perform_update(self, serializer):
+        """Saves the updated social links."""
+        serializer.save()
+        # No extra profile lookup logic needed!
+
 
 class UserDeactivateView(generics.GenericAPIView):
     """ Deactivate a user account """

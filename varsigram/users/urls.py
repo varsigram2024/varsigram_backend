@@ -10,7 +10,8 @@ from .views import (
     CheckUserVerification,
     GetSignedUploadUrlView,
     PublicProfileView,
-    GetSignedPostMediaUploadUrlView
+    GetSignedPostMediaUploadUrlView,
+    SocialLinksUpdateView,
 )
 
 app_name = 'user'
@@ -33,6 +34,7 @@ urlpatterns = [
     path('verify-otp/', VerifyOTPView.as_view(), name='verify-otp'),
     path('check-verification/', CheckUserVerification.as_view(), name='check-verification'),
     path('get-signed-upload-url/', GetSignedUploadUrlView.as_view(), name='get-signed-upload-url'),
+    path('profile/social-links/', SocialLinksUpdateView.as_view(), name='user-social-links-update'),
     path('profile/<slug:slug>/', PublicProfileView.as_view(), name='public-profile'),
     path('get_post_media_upload_url/', GetSignedPostMediaUploadUrlView.as_view(), name='get_post_media_upload_url'),
 ]

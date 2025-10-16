@@ -47,6 +47,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     date_joined = models.DateTimeField(default=timezone.now)
     profile_pic_url = models.URLField(max_length=500, blank=True, null=True, 
                                       help_text="URL to the user's profile picture in Firebase Storage.")
+    linkedin_url = models.URLField(max_length=200, blank=True, null=True)
+    instagram_url = models.URLField(max_length=200, blank=True, null=True)
+    twitter_url = models.URLField(max_length=200, blank=True, null=True)
+    portfolio_url = models.URLField(max_length=200, blank=True, null=True)
+    whatsapp_url = models.URLField(max_length=200, blank=True, null=True)
     is_staff = models.BooleanField(default=False)
     is_deleted = models.BooleanField(default=False)
     is_verified = models.BooleanField(default=False)
