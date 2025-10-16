@@ -48,9 +48,10 @@ class UserSerializer(serializers.ModelSerializer):
     """ Serializer for user objects """
 
     display_name = serializers.SerializerMethodField()
+    links = SocialLinksSerializer(source='*', read_only=True)
     class Meta:
         model = User
-        fields = ['id', 'email', 'display_name', 'bio', 'is_deleted', 'is_verified', 'profile_pic_url']
+        fields = ['id', 'email', 'display_name', 'bio', 'is_deleted', 'is_verified', 'profile_pic_url', 'links']
         read_only_fields = ['id', 'is_deleted', 'is_verified']
 
     def get_display_name(self, obj):
