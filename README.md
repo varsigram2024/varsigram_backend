@@ -1042,7 +1042,7 @@ This endpoint allows an authenticated user to submit points (a reward) to a post
 
 Detail	Specification
 Name	reward-submit
-URL	/api/v1/rewards-points/
+URL	/api/v1/reward-points/
 Method	POST
 Authentication	Required (IsAuthenticated)
 Logic	UPSERT: If the giver has previously rewarded this post_id, the existing points are updated to the new value. If not, a new record is created. (Max 5 points total per user per post enforced).
