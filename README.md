@@ -1117,6 +1117,7 @@ twitter_url	string	The full URL for the user's X (Twitter) profile.
 website_url	string	The full URL for the user's personal/organization website.
 Example Request (PATCH):
 
+```
 JSON
 
 {
