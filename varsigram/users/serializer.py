@@ -20,13 +20,38 @@ from django.utils.translation import gettext_lazy as _
 from firebase_admin import auth
 
 
+class SocialLinksSerializer(serializers.ModelSerializer):
+    """
+    Serializer for handling social link updates directly on the User model.
+    """
+    class Meta:
+        model = User
+        fields = (
+            'linkedin_url', 
+            'instagram_url', 
+            'twitter_url', 
+            'portfolio_url',
+            'whatsapp_url'
+        )
+        read_only_fields = ('id', 'email') # Protect core fields
+
+    def validate(self, data):
+        """Clean up data: Ensure empty strings are stored as None."""
+        validated_data = {}
+        for key, value in data.items():
+            # Treat empty strings as None for cleaner model storage and better URLField handling
+            validated_data[key] = value if value else None
+        return validated_data
+
+
 class UserSerializer(serializers.ModelSerializer):
     """ Serializer for user objects """
 
     display_name = serializers.SerializerMethodField()
+    links = SocialLinksSerializer(source='*', read_only=True)
     class Meta:
         model = User
-        fields = ['id', 'email', 'display_name', 'bio', 'is_deleted', 'is_verified', 'profile_pic_url']
+        fields = ['id', 'email', 'display_name', 'bio', 'is_deleted', 'is_verified', 'profile_pic_url', 'links']
         read_only_fields = ['id', 'is_deleted', 'is_verified']
 
     def get_display_name(self, obj):

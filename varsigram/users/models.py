@@ -7,6 +7,7 @@ from django.utils import timezone
 from uuid import uuid4
 import random
 from django.core.exceptions import ValidationError
+from django.db.models import Sum
 
 class UserManager(BaseUserManager):
     """ Custom manager to exclude soft-deleted objects. and create user """
@@ -46,6 +47,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     date_joined = models.DateTimeField(default=timezone.now)
     profile_pic_url = models.URLField(max_length=500, blank=True, null=True, 
                                       help_text="URL to the user's profile picture in Firebase Storage.")
+    linkedin_url = models.URLField(max_length=200, blank=True, null=True)
+    instagram_url = models.URLField(max_length=200, blank=True, null=True)
+    twitter_url = models.URLField(max_length=200, blank=True, null=True)
+    portfolio_url = models.URLField(max_length=200, blank=True, null=True)
+    whatsapp_url = models.URLField(max_length=200, blank=True, null=True)
     is_staff = models.BooleanField(default=False)
     is_deleted = models.BooleanField(default=False)
     is_verified = models.BooleanField(default=False)
@@ -90,6 +96,18 @@ class User(AbstractBaseUser, PermissionsMixin):
         self.otp = f"{random.randint(100000, 999999)}"
         self.otp_expiry = timezone.now() + timezone.timedelta(minutes=10)
         self.save()
+    
+    @property
+    def total_received_points(self):
+        """ 
+        Calculates the total points the user has received across all their posts.
+        This uses the reverse relation 'received_rewards'.
+        """
+        # The author of the post is the current user (self)
+        return self.received_rewards.aggregate(
+            total=Sum('points')
+        )['total'] or 0
+
 
 class Student(models.Model):
     """ Model for Student related to User """

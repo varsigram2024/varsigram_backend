@@ -1035,3 +1035,114 @@ follower_display_name_slug	Direct to the User Profile Screen.	/profile/:follower
 
 
 
+### Point Submission (RewardPointCreateView)
+
+    1. Reward Point Submission (UPSERT)
+This endpoint allows an authenticated user to submit points (a reward) to a post, initiating a transaction that is validated against Firestore data before being saved to the local database.
+
+Detail	Specification
+Name	reward-submit
+URL	/api/v1/reward-points/
+Method	POST
+Authentication	Required (IsAuthenticated)
+Logic	UPSERT: If the giver has previously rewarded this post_id, the existing points are updated to the new value. If not, a new record is created. (Max 5 points total per user per post enforced).
+
+Request Payload (POST Body)
+Field	Type	Description
+post_id	string (max 100)	The unique ID of the Post document in Firestore.
+points	integer	The point value to assign (Must be between 1 and 5).
+
+
+JSON
+
+{
+    "post_id": "fkewp0ldfIxpT3m7uYGh",
+    "points": 4
+}
+Data Flow Summary (on POST)
+Serializer receives post_id and points.
+
+Serializer calls Firebase SDK with post_id to retrieve the post's author_id (local Postgres ID).
+
+Serializer enforces the 1-5 point limit.
+
+Transaction is saved/updated in the Postgres RewardPointTransaction table, linking the giver, the firestore_post_id, and the denormalized post_author.
+
+2. User Total Points Retrieval (PUBLIC)
+This endpoint retrieves the aggregated total points received by a specific user across all their posts. This information is publicly viewable by any authenticated user.
+
+Detail	Specification
+Name	profile-points-public
+URL	/api/v1/profile/points/<int:pk>/
+Method	GET
+Authentication	Required (IsAuthenticated)
+Logic	Aggregates the SUM(points) from all RewardPointTransaction records where the post_author matches the requested User ID (pk).
+
+
+Request Payload
+No request body is required. The target user is identified via the URL path.
+
+Success Response (HTTP 200 OK)
+Field	Type	Description
+id	integer	The local ID (pk) of the user whose score is being returned.
+username	string	The username of the user.
+total_points_received	integer	The total number of points received from all rewards across all their posts.
+
+
+JSON
+
+/* Requesting the score for User ID 42 */
+/* GET /api/v1/profile/points/42/ */
+{
+    "id": 42,
+    "username": "UserB",
+    "total_points_received": 156
+}
+
+
+1. Social Links Update
+This endpoint allows an authenticated user to update their social media and website links. It performs a partial update, meaning only the fields provided in the payload will be changed.
+
+Detail	Specification
+Name	user-social-links-update
+URL	/api/v1/profile/social-links/
+Method	PATCH
+Authentication	Required (IsAuthenticated)
+Logic	Updates the corresponding fields directly on the authenticated User model instance. Empty strings ("") in the request body are saved as None (clearing the link).
+Request Payload (PATCH Body)
+Field	Type	Description
+linkedin_url	string	The full URL for the user's LinkedIn profile.
+instagram_url	string	The full URL for the user's Instagram profile.
+twitter_url	string	The full URL for the user's X (Twitter) profile.
+website_url	string	The full URL for the user's personal/organization website.
+Example Request (PATCH):
+
+```
+JSON
+
+{
+    "linkedin_url": "https://linkedin.com/in/varsigram_dev",
+    "instagram_url": "https://instagram.com/varsigram_official"
+}
+Success Response (HTTP 200 OK)
+The response returns the updated social link data for the authenticated user.
+
+JSON
+
+{
+    "linkedin_url": "https://linkedin.com/in/varsigram_dev",
+    "instagram_url": "https://instagram.com/varsigram_official",
+    "twitter_url": null,
+    "website_url": null
+}
+Error Response Example (HTTP 400 Bad Request)
+If an invalid URL format is submitted:
+
+JSON
+
+{
+    "linkedin_url": [
+        "Enter a valid URL."
+    ]
+}
+

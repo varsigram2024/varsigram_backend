@@ -4,8 +4,8 @@ from rest_framework.response import Response
 from rest_framework import status
 from firebase_admin import firestore
 from postMang.apps import get_firestore_db  # Import the Firestore client from the app config
-from .models import (User, Follow, Student, Organization)
-from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, GenericFollowSerializer
+from .models import (User, Follow, Student, Organization, RewardPointTransaction)
+from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerializer, FirestorePostCreateSerializer, FirestorePostUpdateSerializer, FirestorePostOutputSerializer, GenericFollowSerializer, RewardPointSerializer, PrivatePointsProfileSerializer
 from .utils import get_exclusive_org_user_ids, get_student_user_ids
 import logging
 import random
@@ -15,6 +15,7 @@ from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from notifications_app.tasks import notify_all_users_new_post
+from rest_framework.mixins import CreateModelMixin
 from notifications_app.utils import send_push_notification
 
 
@@ -389,6 +390,19 @@ class FeedView(APIView):
             # print(f"Paginated posts count after deduplication: {len(unique_paginated_posts)}")
 
             final_posts_for_response = []
+
+            # Collect all post IDs for batch checks
+            final_post_ids = [post['id'] for post in unique_paginated_posts if 'id' in post]
+
+            # NEW REWARD LOGIC
+            rewarded_post_ids_set = set()
+            if current_user.is_authenticated:
+                rewarded_post_ids_qs = RewardPointTransaction.objects.filter(
+                    giver=current_user,
+                    firestore_post_id__in=final_post_ids).values_list('firestore_post_id', flat=True)
+                rewarded_post_ids_set = set(rewarded_post_ids_qs)
+            
+
             for post_data in unique_paginated_posts:
                 post_id = post_data.get('id')
                 if not post_id:
@@ -398,6 +412,7 @@ class FeedView(APIView):
                 post_data['view_count'] = post_doc.to_dict().get('view_count', 0) if post_doc.exists else 0
                 post_data['like_count'] = post_doc.to_dict().get('like_count', 0) if post_doc.exists else 0
                 post_data['has_liked'] = db.collection('posts').document(post_id).collection('likes').document(str(current_user.id)).get().exists
+                post_data['has_rewarded'] = post_id in rewarded_post_ids_set
                 final_posts_for_response.append(post_data)
 
             # print(f"Final posts for response count: {len(final_posts_for_response)}")
@@ -516,6 +531,7 @@ class PostListCreateFirestoreView(APIView):
             
             posts_list = []
             author_ids = set()
+            firestore_post_ids = []
             last_doc_id = None
 
             for doc in docs:
@@ -523,8 +539,15 @@ class PostListCreateFirestoreView(APIView):
                 post_data['id'] = doc.id
                 post_data['view_count'] = post_data.get('view_count', 0)
                 post_data['like_count'] = post_data.get('like_count', 0)
+
+                post_data['has_liked'] = False
+                post_data['has_rewarded'] = False
+
+
                 posts_list.append(post_data)
                 last_doc_id = doc.id  # Will end up being the last doc in the loop
+
+                firestore_post_ids.append(doc.id)
                 if 'author_id' in post_data:
                     author_ids.add(str(post_data['author_id']))
 
@@ -563,6 +586,16 @@ class PostListCreateFirestoreView(APIView):
                 for post in posts_list:
                     like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
                     post['has_liked'] = like_doc_ref.get().exists
+
+                rewarded_post_ids = RewardPointTransaction.objects.filter(
+                    giver=request.user,
+                    firestore_post_id__in=firestore_post_ids
+                ).values_list('firestore_post_id', flat=True)
+
+                rewarded_set = set(rewarded_post_ids)
+
+                for post in posts_list:
+                    post['has_rewarded'] = post['id'] in rewarded_set
 
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
             return Response({
@@ -661,6 +694,8 @@ class PostDetailFirestoreView(APIView):
             post_data['view_count'] = doc_ref.get().to_dict().get('view_count', 0)
             post_data['like_count'] = doc_ref.get().to_dict().get('like_count', 0)
 
+            
+
             # Hydrate author info
             author_id = str(post_data.get('author_id'))
             author_info = None
@@ -715,6 +750,14 @@ class PostDetailFirestoreView(APIView):
                 user_id = str(request.user.id)
                 like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(user_id)
                 post_data['has_liked'] = like_doc_ref.get().exists
+            
+            post_data['has_rewarded'] = False
+            if request.user.is_authenticated:
+                rewarded = RewardPointTransaction.objects.filter(
+                    giver=request.user,
+                    firestore_post_id=post_data['id']
+                ).exists()
+                post_data['has_rewarded'] = rewarded
 
             return Response(post_data, status=status.HTTP_200_OK)
         return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -1293,6 +1336,33 @@ class LikeListFirestoreView(APIView):
             return Response({"error": f"Failed to retrieve likes: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class RewardPointSubmitView(generics.GenericAPIView, CreateModelMixin): # Rename and use GenericAPIView + Mixin
+
+    serializer_class = RewardPointSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    # The POST method is handled by the CreateModelMixin, 
+    # and the Serializer's create method handles the UPSERT logic via IntegrityError.
+    def post(self, request, *args, **kwargs):
+        return self.create(request, *args, **kwargs)
+
+
+class UserPointsDetailView(generics.RetrieveAPIView):
+    """
+    Endpoint to retrieve the total points received by ANY user, 
+    identified by their primary key (pk) in the URL.
+    """
+    serializer_class = PrivatePointsProfileSerializer
+    
+    # Authentication is still required to access the API (if you want to prevent
+    # unauthenticated crawling), but we remove the strict privacy enforcement 
+    # of the previous version.
+    permission_classes = [permissions.IsAuthenticated] 
+    
+    # Specify the queryset so DRF knows where to look for the object
+    queryset = User.objects.all() 
+    
+
 # class TrendingPostsFirestoreView(generics.ListAPIView):
 #     """
 #     Retrieve a list of trending posts from Firestore.
@@ -1437,9 +1507,15 @@ class ExclusiveOrgsRecentPostsView(APIView):
                         post_data = doc.to_dict()
                         post_data['id'] = doc.id
                         post_data['has_liked'] = False
+                        post_data['has_rewarded'] = False
                         if current_user_id:
                             like_doc_ref = db.collection('posts').document(doc.id).collection('likes').document(current_user_id)
                             post_data['has_liked'] = like_doc_ref.get().exists
+                            rewarded = RewardPointTransaction.objects.filter(
+                                giver=request.user,
+                                firestore_post_id=doc.id
+                            ).exists()
+                            post_data['has_rewarded'] = rewarded
                         all_posts.append(post_data)
 
             # 3. Shuffle the ENTIRE list of posts
@@ -1522,9 +1598,15 @@ class UserPostsFirestoreView(APIView):
                 post_data['id'] = doc.id
                 post_data['has_liked'] = False
                 post_data['is_shared'] = False
+                post_data['has_rewarded'] = False
                 if current_user_id:
                     like_doc_ref = db.collection('posts').document(doc.id).collection('likes').document(current_user_id)
                     post_data['has_liked'] = like_doc_ref.get().exists
+                    rewarded = RewardPointTransaction.objects.filter(
+                        giver=request.user,
+                        firestore_post_id=doc.id
+                    ).exists()
+                    post_data['has_rewarded'] = rewarded
                 authored_posts.append(post_data)
 
             # --- Shared Posts ---
