@@ -397,6 +397,7 @@ class RewardPointSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         # Set the giver from the request context
         validated_data['giver'] = self.context['request'].user
+        giver_name = validated_data['giver'].student.name if hasattr(validated_data['giver'], 'student') else validated_data['giver'].organization.organization_name if hasattr(validated_data['giver'], 'organization') else validated_data['giver'].email
         
         # Define the unique fields used for the lookup
         unique_fields = {
@@ -407,6 +408,20 @@ class RewardPointSerializer(serializers.ModelSerializer):
         try:
             # Attempt to create a new transaction (INSERT)
             instance = RewardPointTransaction.objects.create(**validated_data)
+
+            send_push_notification(
+                user=validated_data['post_author'], # The author of the post receiving points
+                title="Your post received reward points!",
+                body=f"{giver_name} rewarded your post with {validated_data['points']} points.",
+                data={
+                    "type": "reward_point",
+                    "giver_id": validated_data['giver'].id,
+                    "giver_email": validated_data['giver'].email,
+                    "giver_name": giver_name,
+                    "points": str(validated_data['points']),
+                    "firestore_post_id": validated_data['firestore_post_id'],
+                }
+            )
             return instance
             
         except IntegrityError:
@@ -418,6 +433,20 @@ class RewardPointSerializer(serializers.ModelSerializer):
                 instance.points = validated_data['points']
                 # The post_author, giver, and firestore_post_id fields should not change, but setting the point value is the goal.
                 instance.save()
+
+                # send_push_notification(
+                #     user=validated_data['post_author'], # The author of the post receiving points
+                #     title="Your post reward points were updated!",
+                #     body=f"{giver_name} updated the reward points on your post to {validated_data['points']} points.",
+                #     data={
+                #         "type": "reward_point_update",
+                #         "giver_id": validated_data['giver'].id,
+                #         "giver_email": validated_data['giver'].email,
+                #         "giver_name": giver_name,
+                #         "points": str(validated_data['points']),
+                #         "firestore_post_id": validated_data['firestore_post_id'],
+                #     }
+                # )
                 
                 return instance
             
