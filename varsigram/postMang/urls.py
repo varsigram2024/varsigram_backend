@@ -7,11 +7,17 @@ from .views import (
     WhoToFollowView, ExclusiveOrgsRecentPostsView,
     VerifiedOrgBadge, BatchPostViewIncrementAPIView,
     RewardPointSubmitView, UserPointsDetailView,
+    QuestionPostView, MilestonePostView, UpdatesPostView,
+    RelatablePostView,
 )
 
 app_name = 'postMang'
 
 urlpatterns = [
+    path('posts/questions/', QuestionPostView.as_view(), name='question-posts'),
+    path('posts/relatable/', RelatablePostView.as_view(), name='relatable-posts'),
+    path('posts/updates/', UpdatesPostView.as_view(), name='update-posts'),
+    path('posts/milestones/', MilestonePostView.as_view(), name='milestone-posts'),
     path('reward-points/', RewardPointSubmitView.as_view(), name='reward-points'),
     path('profile/points/<int:pk>/', UserPointsDetailView.as_view(), name='profile-points-public'),
     path('posts/batch-view/', BatchPostViewIncrementAPIView.as_view(), name='batch-view'),
@@ -34,4 +40,5 @@ urlpatterns = [
     path('users/following/', ListFollowingView.as_view(), name='list-following'),
     path('who-to-follow/', WhoToFollowView.as_view(), name='who-to-follow'),
     path('verified-org-badge/', VerifiedOrgBadge.as_view(), name='verified-org-badge'),
+
 ]
