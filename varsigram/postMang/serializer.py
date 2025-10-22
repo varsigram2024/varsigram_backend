@@ -424,7 +424,7 @@ class RewardPointSerializer(serializers.ModelSerializer):
                     "giver_name": giver_name,
                     "giver_profile_pic_url": validated_data['giver'].profile_pic_url,
                     "points": str(validated_data['points']),
-                    "firestore_post_id": validated_data['firestore_post_id'],
+                    "post_id": validated_data['firestore_post_id'],
                 }
             )
             return instance
