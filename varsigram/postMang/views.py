@@ -563,7 +563,7 @@ class QuestionPostView(APIView):
                     )
                     post['has_rewarded'] = reward_doc_ref.exists()
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
-            has_next_page = end_index < question_posts_query.get().size
+            has_next_page = end_index < len(question_posts_query.get())
             return Response({
                 "results": serializer.data,
                 "session_id": session_id,
@@ -661,7 +661,7 @@ class RelatablePostView(APIView):
                     )
                     post['has_rewarded'] = reward_doc_ref.exists()
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
-            has_next_page = end_index < question_posts_query.get().size
+            has_next_page = end_index < len(question_posts_query.get())
             return Response({
                 "results": serializer.data,
                 "session_id": session_id,
@@ -759,7 +759,7 @@ class UpdatesPostView(APIView):
                     )
                     post['has_rewarded'] = reward_doc_ref.exists()
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
-            has_next_page = end_index < question_posts_query.get().size
+            has_next_page = end_index < len(question_posts_query.get())
             return Response({
                 "results": serializer.data,
                 "session_id": session_id,
@@ -857,7 +857,7 @@ class MilestonePostView(APIView):
                     )
                     post['has_rewarded'] = reward_doc_ref.exists()
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
-            has_next_page = end_index < question_posts_query.get().size
+            has_next_page = end_index < len(question_posts_query.get())
             return Response({
                 "results": serializer.data,
                 "session_id": session_id,
