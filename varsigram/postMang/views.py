@@ -478,6 +478,396 @@ class IsFirestoreDocOwner(permissions.BasePermission):
 ##
 ## Post Views (Firestore)
 ##
+class QuestionPostView(APIView):
+    """ List recent posts that has the tag 'question' in a order of new to old, paginated.
+    Uses a session ID for consistent pagination.
+    """
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self,request):
+        try:
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 10))
+            session_id = request.query_params.get('session_id')
+            if not session_id:
+                session_id = str(uuid.uuid4())
+            random.seed(session_id)
+
+            # Fetch posts with 'question' tag
+            question_posts_query = db.collection('posts').where('tags', '==', 'question').order_by('timestamp', direction=firestore.Query.DESCENDING)
+
+            # Pagination
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+
+            docs = question_posts_query.offset(start_index).limit(page_size).stream()
+
+            posts_list = []
+            author_ids = set()
+            last_doc_id = None
+
+            for doc in docs:
+                post_data = doc.to_dict()
+                post_data['id'] = doc.id
+                post_data['view_count'] = post_data.get('view_count', 0)
+                post_data['like_count'] = post_data.get('like_count', 0)
+
+                post_data['has_liked'] = False
+                post_data['has_rewarded'] = False
+
+                posts_list.append(post_data)
+                last_doc_id = doc.id  # Will end up being the last doc in the loop
+
+                if 'author_id' in post_data:
+                    author_ids.add(str(post_data['author_id']))
+
+            # Hydrate authors (similar to FeedView)
+            authors_map = {}
+            if author_ids:
+                authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
+                for author in authors_from_postgres:
+                    author_name = None
+                    display_name_slug = None
+                    if hasattr(author, 'student'):
+                        author_name = author.student.name
+                        display_name_slug = getattr(author.student, 'display_name_slug', None)
+                        author_faculty = getattr(author.student, 'faculty', None)
+                        author_department = getattr(author.student, 'department', None)
+                    elif hasattr(author, 'organization'):
+                        author_name = author.organization.organization_name
+                        display_name_slug = getattr(author.organization, 'display_name_slug', None)
+                        exclusive = getattr(author.organization, 'exclusive', False)
+
+                    authors_map[str(author.id)] = {
+                        "id": author.id,
+                        "email": author.email,
+                        "profile_pic_url": author.profile_pic_url,
+                        "name": author_name,
+                        "display_name_slug": display_name_slug,
+                        "is_verified": author.is_verified,
+                        "exclusive": exclusive if hasattr(author, 'organization') else False,
+                        "faculty": author_faculty if hasattr(author, 'student') else None,
+                        "department": author_department if hasattr(author, 'student') else None,
+                    }
+            # Has liked logic
+            if request.user.is_authenticated and posts_list:
+                user_id = str(request.user.id)
+                for post in posts_list:
+                    like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
+                    post['has_liked'] = like_doc_ref.get().exists
+                    # Reward logic
+                    reward_doc_ref = RewardPointTransaction.objects.filter(
+                        giver=request.user,
+                        firestore_post_id=post['id']
+                    )
+                    post['has_rewarded'] = reward_doc_ref.exists()
+            serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
+            has_next_page = end_index < len(question_posts_query.get())
+            return Response({
+                "results": serializer.data,
+                "session_id": session_id,
+                "page": page,
+                "page_size": page_size,
+                "has_next": has_next_page,
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error fetching question posts: {str(e)}")
+            return Response({"error": f"Failed to retrieve question posts: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class RelatablePostView(APIView):
+    """
+    List recent posts that has the tag 'relatable' in a order of new to old, paginated.
+    Uses a session ID for consistent pagination.
+    """
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self,request):
+        try:
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 10))
+            session_id = request.query_params.get('session_id')
+            if not session_id:
+                session_id = str(uuid.uuid4())
+            random.seed(session_id)
+
+            # Fetch posts with 'question' tag
+            question_posts_query = db.collection('posts').where('tags', '==', 'relatable').order_by('timestamp', direction=firestore.Query.DESCENDING)
+
+            # Pagination
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+
+            docs = question_posts_query.offset(start_index).limit(page_size).stream()
+
+            posts_list = []
+            author_ids = set()
+            last_doc_id = None
+
+            for doc in docs:
+                post_data = doc.to_dict()
+                post_data['id'] = doc.id
+                post_data['view_count'] = post_data.get('view_count', 0)
+                post_data['like_count'] = post_data.get('like_count', 0)
+
+                post_data['has_liked'] = False
+                post_data['has_rewarded'] = False
+
+                posts_list.append(post_data)
+                last_doc_id = doc.id  # Will end up being the last doc in the loop
+
+                if 'author_id' in post_data:
+                    author_ids.add(str(post_data['author_id']))
+
+            # Hydrate authors (similar to FeedView)
+            authors_map = {}
+            if author_ids:
+                authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
+                for author in authors_from_postgres:
+                    author_name = None
+                    display_name_slug = None
+                    if hasattr(author, 'student'):
+                        author_name = author.student.name
+                        display_name_slug = getattr(author.student, 'display_name_slug', None)
+                        author_faculty = getattr(author.student, 'faculty', None)
+                        author_department = getattr(author.student, 'department', None)
+                    elif hasattr(author, 'organization'):
+                        author_name = author.organization.organization_name
+                        display_name_slug = getattr(author.organization, 'display_name_slug', None)
+                        exclusive = getattr(author.organization, 'exclusive', False)
+
+                    authors_map[str(author.id)] = {
+                        "id": author.id,
+                        "email": author.email,
+                        "profile_pic_url": author.profile_pic_url,
+                        "name": author_name,
+                        "display_name_slug": display_name_slug,
+                        "is_verified": author.is_verified,
+                        "exclusive": exclusive if hasattr(author, 'organization') else False,
+                        "faculty": author_faculty if hasattr(author, 'student') else None,
+                        "department": author_department if hasattr(author, 'student') else None,
+                    }
+            # Has liked logic
+            if request.user.is_authenticated and posts_list:
+                user_id = str(request.user.id)
+                for post in posts_list:
+                    like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
+                    post['has_liked'] = like_doc_ref.get().exists
+                    # Reward logic
+                    reward_doc_ref = RewardPointTransaction.objects.filter(
+                        giver=request.user,
+                        firestore_post_id=post['id']
+                    )
+                    post['has_rewarded'] = reward_doc_ref.exists()
+            serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
+            has_next_page = end_index < len(question_posts_query.get())
+            return Response({
+                "results": serializer.data,
+                "session_id": session_id,
+                "page": page,
+                "page_size": page_size,
+                "has_next": has_next_page,
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error fetching relatable posts: {str(e)}")
+            return Response({"error": f"Failed to retrieve relatable posts: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class UpdatesPostView(APIView):
+    """
+    List recent posts that has the tag 'update' in a order of new to old, paginated.
+    Uses a session ID for consistent pagination.
+    """
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self,request):
+        try:
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 10))
+            session_id = request.query_params.get('session_id')
+            if not session_id:
+                session_id = str(uuid.uuid4())
+            random.seed(session_id)
+
+            # Fetch posts with 'question' tag
+            question_posts_query = db.collection('posts').where('tags', '==', 'update').order_by('timestamp', direction=firestore.Query.DESCENDING)
+
+            # Pagination
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+
+            docs = question_posts_query.offset(start_index).limit(page_size).stream()
+
+            posts_list = []
+            author_ids = set()
+            last_doc_id = None
+
+            for doc in docs:
+                post_data = doc.to_dict()
+                post_data['id'] = doc.id
+                post_data['view_count'] = post_data.get('view_count', 0)
+                post_data['like_count'] = post_data.get('like_count', 0)
+
+                post_data['has_liked'] = False
+                post_data['has_rewarded'] = False
+
+                posts_list.append(post_data)
+                last_doc_id = doc.id  # Will end up being the last doc in the loop
+
+                if 'author_id' in post_data:
+                    author_ids.add(str(post_data['author_id']))
+
+            # Hydrate authors (similar to FeedView)
+            authors_map = {}
+            if author_ids:
+                authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
+                for author in authors_from_postgres:
+                    author_name = None
+                    display_name_slug = None
+                    if hasattr(author, 'student'):
+                        author_name = author.student.name
+                        display_name_slug = getattr(author.student, 'display_name_slug', None)
+                        author_faculty = getattr(author.student, 'faculty', None)
+                        author_department = getattr(author.student, 'department', None)
+                    elif hasattr(author, 'organization'):
+                        author_name = author.organization.organization_name
+                        display_name_slug = getattr(author.organization, 'display_name_slug', None)
+                        exclusive = getattr(author.organization, 'exclusive', False)
+
+                    authors_map[str(author.id)] = {
+                        "id": author.id,
+                        "email": author.email,
+                        "profile_pic_url": author.profile_pic_url,
+                        "name": author_name,
+                        "display_name_slug": display_name_slug,
+                        "is_verified": author.is_verified,
+                        "exclusive": exclusive if hasattr(author, 'organization') else False,
+                        "faculty": author_faculty if hasattr(author, 'student') else None,
+                        "department": author_department if hasattr(author, 'student') else None,
+                    }
+            # Has liked logic
+            if request.user.is_authenticated and posts_list:
+                user_id = str(request.user.id)
+                for post in posts_list:
+                    like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
+                    post['has_liked'] = like_doc_ref.get().exists
+                    # Reward logic
+                    reward_doc_ref = RewardPointTransaction.objects.filter(
+                        giver=request.user,
+                        firestore_post_id=post['id']
+                    )
+                    post['has_rewarded'] = reward_doc_ref.exists()
+            serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
+            has_next_page = end_index < len(question_posts_query.get())
+            return Response({
+                "results": serializer.data,
+                "session_id": session_id,
+                "page": page,
+                "page_size": page_size,
+                "has_next": has_next_page,
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error fetching update posts: {str(e)}")
+            return Response({"error": f"Failed to retrieve update posts: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class MilestonePostView(APIView):
+    """
+    List recent posts that has the tag 'milestone' in a order of new to old, paginated.
+    Uses a session ID for consistent pagination.
+    """
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self,request):
+        try:
+            page = int(request.query_params.get('page', 1))
+            page_size = int(request.query_params.get('page_size', 10))
+            session_id = request.query_params.get('session_id')
+            if not session_id:
+                session_id = str(uuid.uuid4())
+            random.seed(session_id)
+
+            # Fetch posts with 'question' tag
+            question_posts_query = db.collection('posts').where('tags', '==', 'milestone').order_by('timestamp', direction=firestore.Query.DESCENDING)
+
+            # Pagination
+            start_index = (page - 1) * page_size
+            end_index = start_index + page_size
+
+            docs = question_posts_query.offset(start_index).limit(page_size).stream()
+
+            posts_list = []
+            author_ids = set()
+            last_doc_id = None
+
+            for doc in docs:
+                post_data = doc.to_dict()
+                post_data['id'] = doc.id
+                post_data['view_count'] = post_data.get('view_count', 0)
+                post_data['like_count'] = post_data.get('like_count', 0)
+
+                post_data['has_liked'] = False
+                post_data['has_rewarded'] = False
+
+                posts_list.append(post_data)
+                last_doc_id = doc.id  # Will end up being the last doc in the loop
+
+                if 'author_id' in post_data:
+                    author_ids.add(str(post_data['author_id']))
+
+            # Hydrate authors (similar to FeedView)
+            authors_map = {}
+            if author_ids:
+                authors_from_postgres = User.objects.filter(id__in=author_ids).only('id', 'email', 'profile_pic_url', 'is_verified')
+                for author in authors_from_postgres:
+                    author_name = None
+                    display_name_slug = None
+                    if hasattr(author, 'student'):
+                        author_name = author.student.name
+                        display_name_slug = getattr(author.student, 'display_name_slug', None)
+                        author_faculty = getattr(author.student, 'faculty', None)
+                        author_department = getattr(author.student, 'department', None)
+                    elif hasattr(author, 'organization'):
+                        author_name = author.organization.organization_name
+                        display_name_slug = getattr(author.organization, 'display_name_slug', None)
+                        exclusive = getattr(author.organization, 'exclusive', False)
+
+                    authors_map[str(author.id)] = {
+                        "id": author.id,
+                        "email": author.email,
+                        "profile_pic_url": author.profile_pic_url,
+                        "name": author_name,
+                        "display_name_slug": display_name_slug,
+                        "is_verified": author.is_verified,
+                        "exclusive": exclusive if hasattr(author, 'organization') else False,
+                        "faculty": author_faculty if hasattr(author, 'student') else None,
+                        "department": author_department if hasattr(author, 'student') else None,
+                    }
+            # Has liked logic
+            if request.user.is_authenticated and posts_list:
+                user_id = str(request.user.id)
+                for post in posts_list:
+                    like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
+                    post['has_liked'] = like_doc_ref.get().exists
+                    # Reward logic
+                    reward_doc_ref = RewardPointTransaction.objects.filter(
+                        giver=request.user,
+                        firestore_post_id=post['id']
+                    )
+                    post['has_rewarded'] = reward_doc_ref.exists()
+            serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
+            has_next_page = end_index < len(question_posts_query.get())
+            return Response({
+                "results": serializer.data,
+                "session_id": session_id,
+                "page": page,
+                "page_size": page_size,
+                "has_next": has_next_page,
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Error fetching Milestone posts: {str(e)}")
+            return Response({"error": f"Failed to retrieve Milestone posts: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class BatchPostViewIncrementAPIView(APIView):
     """
@@ -618,6 +1008,7 @@ class PostListCreateFirestoreView(APIView):
             data = serializer.validated_data
             try:
                 author_name = ""
+                author_profile_pic_url = request.user.profile_pic_url
 
                 if hasattr(request.user, 'student'):
                     author_name = request.user.student.name
@@ -625,13 +1016,13 @@ class PostListCreateFirestoreView(APIView):
                     author_name = request.user.organization.organization_name
                 else:
                     author_name = request.user.email
-                
 
                 post_payload = {
                     'author_id': str(request.user.id), # Link to Django User ID
                     # 'author_email': request.user.email, # Denormalize for convenience
                     'content': data['content'],
                     'slug': data.get('slug', ''), # Handle slug generation if needed
+                    'tags': data.get('tags'),
                     'timestamp': firestore.SERVER_TIMESTAMP,
                     'like_count': 0,
                     'comment_count': 0,
@@ -651,7 +1042,8 @@ class PostListCreateFirestoreView(APIView):
                     author_id=request.user.id,
                     author_name=author_name,
                     post_content=data['content'],
-                    post_id=created_post['id']
+                    post_id=created_post['id'],
+                    author_profile_pic_url=author_profile_pic_url,
                 )
 
                 return Response(created_post, status=status.HTTP_201_CREATED)
@@ -863,6 +1255,7 @@ class CommentCreateFirestoreView(APIView):
 
             try:
                 user_name = ""
+                user_profile_pic_url = request.user.profile_pic_url
                 if hasattr(request.user, 'student'):
                     user_name = request.user.student.name
                 elif hasattr(request.user, 'organization'):
@@ -937,6 +1330,7 @@ class CommentCreateFirestoreView(APIView):
                             "post_id": post_id,
                             "comment_id": new_comment_id,
                             "commenter_id": user_id,
+                            "commenter_profile_pic_url": user_profile_pic_url,
                         }
                     )
                 
@@ -1689,89 +2083,145 @@ class UserPostsFirestoreView(APIView):
 
 class WhoToFollowView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-    authentication_classes = [JWTAuthentication]
+    # authentication_classes = [JWTAuthentication] # Keep this as per your setup
 
-    def get(self, request):
+    def get(self, request, *args, **kwargs):
         user = request.user
+        LIMIT = 20 # Define the limit once
+
         try:
-            student = Student.objects.select_related('user').get(user=user)
-            student_ct = ContentType.objects.get(model='student')
-            org_ct = ContentType.objects.get(model='organization')
-
-            # print("Current user:", user)
-            # print("Current student id:", student.id)
-            # print("student_ct.id:", student_ct.id)
-            # print("org_ct.id:", org_ct.id)
-
-            follows = Follow.objects.filter(
-                follower_content_type=student_ct,
-                follower_object_id=student.id
-            )
-            followed_student_ids = set(int(x) for x in follows.filter(followee_content_type=student_ct).values_list('followee_object_id', flat=True))
-            followed_org_ids = set(int(x) for x in follows.filter(followee_content_type=org_ct).values_list('followee_object_id', flat=True))
-
-            keywords = []
-            if student.department:
-                keywords.append(student.department)
-            if student.faculty:
-                keywords.append(student.faculty)
-            if student.religion:
-                keywords.append(student.religion)
-
-            student_query = Q()
-            for kw in keywords:
-                student_query |= Q(department__icontains=kw) | Q(faculty__icontains=kw) | Q(religion__icontains=kw)
-            recommended_students = Student.objects.filter(student_query).exclude(
-                id__in=followed_student_ids
-            ).exclude(user=user)[:20]
-
-            org_query = Q()
-            for kw in keywords:
-                org_query |= Q(organization_name__icontains=kw) | Q(user__bio__icontains=kw)
-            recommended_orgs = Organization.objects.filter(org_query).exclude(
-                id__in=followed_org_ids
-            )[:20]
-
-            exclusive_orgs = Organization.objects.filter(exclusive=True).exclude(id__in=followed_org_ids)
-
-            # print("followed_student_ids:", followed_student_ids)
-            # print("followed_org_ids:", followed_org_ids)
-            # print("Recommended org IDs:", [org.id for org in (recommended_orgs | exclusive_orgs).distinct()])
-
-            users_data = [
-                {
-                    "type": "student",
-                    "id": s.id,
-                    "user_id": s.user.id,
-                    "name": s.name,
-                    "display_name_slug": getattr(s, "display_name_slug", None),
-                    "profile_pic_url": getattr(s.user, "profile_pic_url", None),
-                    "bio": getattr(s.user, "bio", None),
-                    "is_following": s.id in followed_student_ids,
-                    "is_verified": s.user.is_verified if hasattr(s, 'user') else False,
-                }
-                for s in recommended_students
-            ] + [
-                {
-                    "type": "organization",
-                    "id": org.id,
-                    "user_id": org.user.id,
-                    "name": org.organization_name,
-                    "display_name_slug": org.display_name_slug,
-                    "profile_pic_url": getattr(org.user, "profile_pic_url", None),
-                    "bio": org.user.bio if hasattr(org, 'user') else None,
-                    "exclusive": org.exclusive,
-                    "is_following": org.id in followed_org_ids,
-                    "is_verified": org.user.is_verified if hasattr(org, 'user') else False,
-                }
-                for org in (recommended_orgs | exclusive_orgs).distinct()
-            ]
-
-            users_data = users_data[:20]
-
-            return Response(users_data, status=status.HTTP_200_OK)
+            # 1. Fetch current student and related data efficiently
+            current_student = Student.objects.select_related('user').get(user=user)
         except Student.DoesNotExist:
             return Response({"error": "Student profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # 2. Pre-fetch ContentTypes once
+        try:
+            student_ct = ContentType.objects.get(model='student')
+            org_ct = ContentType.objects.get(model='organization')
+        except ContentType.DoesNotExist:
+            # Handle case where ContentTypes aren't found, though rare
+            return Response({"error": "Content type configuration error."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # 3. Get followed IDs in two efficient queries
+        follows_qs = Follow.objects.filter(
+            follower_content_type=student_ct,
+            follower_object_id=current_student.id
+        )
+        
+        # Use a list comprehension with .distinct() for better SQL optimization
+        followed_student_ids = set(follows_qs.filter(
+            followee_content_type=student_ct
+        ).values_list('followee_object_id', flat=True))
+        
+        followed_org_ids = set(follows_qs.filter(
+            followee_content_type=org_ct
+        ).values_list('followee_object_id', flat=True))
+
+        # 4. Build keyword-based recommendation query
+        keywords = []
+        # Use a consistent list of profile attributes for recommendation
+        for attr in ['department', 'faculty', 'religion']:
+            value = getattr(current_student, attr, None)
+            if value:
+                # Add value to keywords, ensuring it's treated as a single search term if needed
+                keywords.append(value) 
+
+        # 5. Get recommended Students (optimizing with select_related)
+        student_query = Q()
+        for kw in set(keywords): # Use set to avoid redundant keywords
+            # Combining the lookups with OR logic
+            student_query |= (
+                Q(department__icontains=kw) | 
+                Q(faculty__icontains=kw) | 
+                Q(religion__icontains=kw)
+            )
+        
+        recommended_students = Student.objects.select_related('user').filter(
+            student_query
+        ).exclude(
+            id__in=followed_student_ids
+        ).exclude(
+            user=user # Exclude self
+        ).order_by('?')[:LIMIT] # Use '?' for random or consider a popularity/activity score
+
+        # 6. Get recommended Organizations (optimizing with select_related)
+        org_query = Q()
+        for kw in set(keywords):
+            # Organization fields to match on
+            org_query |= (
+                Q(organization_name__icontains=kw) | 
+                Q(user__bio__icontains=kw)
+            )
+
+        # Separate filter for exclusive organizations for clarity
+        exclusive_orgs_qs = Organization.objects.select_related('user').filter(
+            exclusive=True
+        ).exclude(
+            id__in=followed_org_ids
+        )
+
+        recommended_orgs_qs = Organization.objects.select_related('user').filter(
+            org_query
+        ).exclude(
+            id__in=followed_org_ids
+        )
+        
+        # Combine, ensure uniqueness, and take the top N (ordering might matter here)
+        all_recommended_orgs = (exclusive_orgs_qs | recommended_orgs_qs).distinct().order_by('?')[:LIMIT]
+
+
+        # 7. Serialize Data (can be refactored into a Serializer)
+        users_data = []
+
+        # Students
+        users_data.extend(
+            self._serialize_student(s, followed_student_ids) 
+            for s in recommended_students
+        )
+        
+        # Organizations
+        users_data.extend(
+            self._serialize_organization(org, followed_org_ids) 
+            for org in all_recommended_orgs
+        )
+
+        # 8. Truncate (if necessary, though limits were applied) and return
+        return Response(users_data[:LIMIT], status=status.HTTP_200_OK)
+
+    # Helper methods for cleaner serialization (optional but recommended)
+    def _serialize_student(self, student, followed_ids):
+        """Helper to serialize a Student instance."""
+        user = getattr(student, 'user', None)
+        return {
+            "type": "student",
+            "id": student.id,
+            "user_id": user.id if user else None,
+            "name": student.name,
+            "faculty": student.faculty,
+            "department": student.department,
+            "display_name_slug": getattr(student, "display_name_slug", None),
+            "profile_pic_url": getattr(user, "profile_pic_url", None),
+            "bio": getattr(user, "bio", None),
+            "is_following": student.id in followed_ids,
+            "is_verified": getattr(user, "is_verified", False),
+        }
+
+    def _serialize_organization(self, org, followed_ids):
+        """Helper to serialize an Organization instance."""
+        user = getattr(org, 'user', None)
+        return {
+            "type": "organization",
+            "id": org.id,
+            "user_id": user.id if user else None,
+            "name": org.organization_name,
+            "display_name_slug": org.display_name_slug,
+            "profile_pic_url": getattr(user, "profile_pic_url", None),
+            "bio": getattr(user, "bio", None),
+            "exclusive": org.exclusive,
+            "is_following": org.id in followed_ids,
+            "is_verified": getattr(user, "is_verified", False),
+        }
 
 class VerifiedOrgBadge(APIView):
     """Checks if the Organization is Exclusive and Verified"""

@@ -21,6 +21,7 @@ class FirestorePostCreateSerializer(serializers.Serializer):
         allow_empty=True,
         help_text="List of media URLs associated with the post."
     )
+    tags = serializers.CharField(max_length=100, required=False, allow_blank=True, help_text="Optional tag/category for the post.")
     tagged_users = serializers.ListField(
         child=serializers.CharField(max_length=255),
         required=False,)
@@ -103,6 +104,7 @@ class FirestorePostOutputSerializer(serializers.Serializer):
     author_name = serializers.CharField(read_only=True, help_text="The actual name of the post's author (denormalized).")
     author_profile_pic_url = serializers.URLField(read_only=True, allow_null=True, allow_blank=True)
     content = serializers.CharField(read_only=True, help_text="The main text content of the post.")
+    tags = serializers.CharField(read_only=True, help_text="The tag/category of the post.", required=False, allow_null=True)
     
     # Include other fields that exist in your Firestore post documents and you want to output:
     slug = serializers.CharField(read_only=True, required=False, help_text="URL-friendly slug of the post.")
@@ -320,6 +322,7 @@ class GenericFollowSerializer(serializers.ModelSerializer):
             # Get the name of the follower (the person who just followed)
             follower_name = ""
             follower_display_name_slug = ""
+            follower_profile_pic_url = self.context['request'].user.profile_pic_url
             if hasattr(self.context['request'].user, 'student'):
                 follower_name = self.context['request'].user.student.name
                 follower_display_name_slug = self.context['request'].user.student.display_name_slug
@@ -339,6 +342,7 @@ class GenericFollowSerializer(serializers.ModelSerializer):
                     "follower_id": follower_user_id,
                     "follower_name": follower_name,
                     "follower_display_name_slug": follower_display_name_slug,
+                    "follower_profile_pic_url": follower_profile_pic_url,
                 }
             )
         
@@ -397,6 +401,7 @@ class RewardPointSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         # Set the giver from the request context
         validated_data['giver'] = self.context['request'].user
+        giver_name = validated_data['giver'].student.name if hasattr(validated_data['giver'], 'student') else validated_data['giver'].organization.organization_name if hasattr(validated_data['giver'], 'organization') else validated_data['giver'].email
         
         # Define the unique fields used for the lookup
         unique_fields = {
@@ -407,6 +412,21 @@ class RewardPointSerializer(serializers.ModelSerializer):
         try:
             # Attempt to create a new transaction (INSERT)
             instance = RewardPointTransaction.objects.create(**validated_data)
+
+            send_push_notification(
+                user=validated_data['post_author'], # The author of the post receiving points
+                title="Your post received reward points!",
+                body=f"{giver_name} rewarded your post with {validated_data['points']} points.",
+                data={
+                    "type": "reward_point",
+                    "giver_id": validated_data['giver'].id,
+                    "giver_email": validated_data['giver'].email,
+                    "giver_name": giver_name,
+                    "giver_profile_pic_url": validated_data['giver'].profile_pic_url,
+                    "points": str(validated_data['points']),
+                    "post_id": validated_data['firestore_post_id'],
+                }
+            )
             return instance
             
         except IntegrityError:
@@ -418,6 +438,20 @@ class RewardPointSerializer(serializers.ModelSerializer):
                 instance.points = validated_data['points']
                 # The post_author, giver, and firestore_post_id fields should not change, but setting the point value is the goal.
                 instance.save()
+
+                # send_push_notification(
+                #     user=validated_data['post_author'], # The author of the post receiving points
+                #     title="Your post reward points were updated!",
+                #     body=f"{giver_name} updated the reward points on your post to {validated_data['points']} points.",
+                #     data={
+                #         "type": "reward_point_update",
+                #         "giver_id": validated_data['giver'].id,
+                #         "giver_email": validated_data['giver'].email,
+                #         "giver_name": giver_name,
+                #         "points": str(validated_data['points']),
+                #         "firestore_post_id": validated_data['firestore_post_id'],
+                #     }
+                # )
                 
                 return instance
             

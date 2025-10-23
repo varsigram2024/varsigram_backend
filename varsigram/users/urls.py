@@ -12,6 +12,7 @@ from .views import (
     PublicProfileView,
     GetSignedPostMediaUploadUrlView,
     SocialLinksUpdateView,
+    GetSignedMediaUploadUrlView,
 )
 
 app_name = 'user'
@@ -37,4 +38,5 @@ urlpatterns = [
     path('profile/social-links/', SocialLinksUpdateView.as_view(), name='user-social-links-update'),
     path('profile/<slug:slug>/', PublicProfileView.as_view(), name='public-profile'),
     path('get_post_media_upload_url/', GetSignedPostMediaUploadUrlView.as_view(), name='get_post_media_upload_url'),
+    path('get_media_upload_url/', GetSignedMediaUploadUrlView.as_view(), name='get_media_upload_url'),
 ]

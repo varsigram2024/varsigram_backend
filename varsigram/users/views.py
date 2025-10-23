@@ -675,6 +675,57 @@ class GetSignedPostMediaUploadUrlView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+class GetSignedMediaUploadUrlView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request):
+        file_name = request.data.get('file_name')
+        content_type = request.data.get('content_type')
+
+        if not file_name or not content_type:
+            return Response(
+                {"error": "Both 'file_name' and 'content_type' are required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        allowed_content_types = [
+            'image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'video/quicktime'
+        ]
+        if content_type not in allowed_content_types:
+            return Response(
+                {"error": f"Unsupported content type: {content_type}. Allowed types are: {', '.join(allowed_content_types)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        _, file_extension = os.path.splitext(file_name)
+        unique_filename = f"{uuid4()}{file_extension}"
+        destination_path = f"media/{unique_filename}"
+
+        try:
+            bucket = get_firebase_storage_client()
+            blob = bucket.blob(destination_path)
+            upload_url = blob.generate_signed_url(
+                version='v4',
+                expiration=timedelta(minutes=15),
+                method='PUT',
+                content_type=content_type,
+            )
+            public_download_url = (
+                f"https://firebasestorage.googleapis.com/v0/b/{bucket.name}/o/"
+                f"{destination_path.replace('/', '%2F')}?alt=media"
+            )
+            return Response({
+                "upload_url": upload_url,
+                "file_path": destination_path,
+                "public_download_url": public_download_url
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            # print(f"Error generating signed URL: {e}")
+            return Response(
+                {"error": f"Could not generate signed URL: {e}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 # class PublicApi(APIView):
 #     authentication_classes = ()
 #     permission_classes = ()

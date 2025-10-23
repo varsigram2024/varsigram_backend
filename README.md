@@ -269,6 +269,20 @@ Most endpoints require authentication. Authentication is handled using token-bas
         ```
     *   Response (200 OK): Returns the signed upload URL and file path.
 
+*   **`POST /get_media_upload_url/`**  [name='get_media_upload_url']
+
+    *   Description: Returns a signed URL for uploading media files to Firebase Storage.
+    *   Request: `POST`
+    *   Authentication: Required
+    *   Request Body (JSON):
+        ```json
+        {
+            "file_name": "filename.jpg",
+            "content_type": "image/jpeg"
+        }
+        ```
+    *   Response (200 OK): Returns the signed upload URL and file path.
+
 *   **`GET /profile/<slug:slug>/`**  [name='public-profile']
 
     *   Description: Retrieves a user's public profile by `display_name_slug`.
@@ -474,6 +488,197 @@ Most endpoints require authentication. Authentication is handled using token-bas
 - Each post includes hydrated author information and share details if applicable.
 - If authenticated, the `has_liked`
 
+* **`GET /posts/questions/`**
+[name='questions-recent-posts']
+
+    *   Description: Retrieves recent posts with question tag. Supports cursor-based pagination.
+    *   Request: `GET`
+    *   Authentication: Optional (some fields like `has_liked` depend on authentication)
+    *   Query Parameters:
+        *   `page`: (optional, default: 1) The page number for pagination.
+        *   `page_size`: (optional, default: 10) Number of posts to return per page.
+        *   `session_id`: (optional) A unique string to ensure consistent feed order for a session. If not provided, a new session ID is generated.
+    *   Response (200 OK): Returns a paginated list of recent posts with question tag.
+        ```json
+        {
+            "results": [
+                {
+                    "id": "post_id",
+                    "content": "Post content",
+                    "timestamp": "2025-07-22T12:34:56Z",
+                    "author_id": "org_user_id",
+                    "has_liked": false,
+                    "has_rewarded": true,
+                    "media_urls": [],
+                    // ...other post fields...
+                }
+            ],
+            "session_id": "abc123-session-id",
+            "page": 1,
+            "page_size": 10,
+            "has_next": true
+        }
+        ```
+    *   Response (200 OK, empty): If no posts are found.
+        ```json
+        {
+            "results": [],
+            "session_id": "abc123-session-id",
+            "page": 1,
+            "page_size": 10,
+            "has_next": false
+        }
+        ```
+    *   Response (500 Internal Server Error): If an error occurs.
+        ```json
+        {
+            "detail": "Error fetching posts."
+        }
+        ```
+
+* **`GET /posts/relatable/`**
+[name='relatable-recent-posts']
+
+    *   Description: Retrieves recent posts with relatable tag. Supports cursor-based pagination.
+    *   Request: `GET`
+    *   Authentication: Optional (some fields like `has_liked` depend on authentication)
+    *   Query Parameters:
+        *   `page`: (optional, default: 1) The page number for pagination.
+        *   `page_size`: (optional, default: 10) Number of posts to return per page.
+        *   `session_id`: (optional) A unique string to ensure consistent feed order for a session. If not provided, a new session ID is generated.
+    *   Response (200 OK): Returns a paginated list of recent posts with relatable tag.
+        ```json
+        {
+            "results": [
+                {
+                    "id": "post_id",
+                    "content": "Post content",
+                    "timestamp": "2025-07-22T12:34:56Z",
+                    "author_id": "org_user_id",
+                    "has_liked": false,
+                    "has_rewarded": true,
+                    "media_urls": [],
+                    // ...other post fields...
+                }
+            ],
+            "session_id": "abc123-session-id",
+            "page": 1,
+            "page_size": 10,
+            "has_next": true
+        }
+        ```
+    *   Response (200 OK, empty): If no posts are found.
+        ```json
+        {
+            "results": [],
+            "session_id": "abc123-session-id",
+            "page": 1,
+            "page_size": 10,
+            "has_next": false
+        }
+        ```
+    *   Response (500 Internal Server Error): If an error occurs.
+        ```json
+        {
+            "detail": "Error fetching posts."
+        }
+        ```
+
+* **`GET /posts/updates/`**
+[name='updates-recent-posts']
+
+    *   Description: Retrieves recent posts with update tag. Supports cursor-based pagination.
+    *   Request: `GET`
+    *   Authentication: Optional (some fields like `has_liked` depend on authentication)
+    *   Query Parameters:
+        *   `page`: (optional, default: 1) The page number for pagination.
+        *   `page_size`: (optional, default: 10) Number of posts to return per page.
+        *   `session_id`: (optional) A unique string to ensure consistent feed order for a session. If not provided, a new session ID is generated.
+    *   Response (200 OK): Returns a paginated list of recent posts with update tag.
+        ```json
+        {
+            "results": [
+                {
+                    "id": "post_id",
+                    "content": "Post content",
+                    "timestamp": "2025-07-22T12:34:56Z",
+                    "author_id": "org_user_id",
+                    "has_liked": false,
+                    "has_rewarded": true,
+                    "media_urls": [],
+                    // ...other post fields...
+                }
+            ],
+            "session_id": "abc123-session-id",
+            "page": 1,
+            "page_size": 10,
+            "has_next": true
+        }
+        ```
+    *   Response (200 OK, empty): If no posts are found.
+        ```json
+        {
+            "results": [],
+            "session_id": "abc123-session-id",
+            "page": 1,
+            "page_size": 10,
+            "has_next": false
+        }
+        ```
+    *   Response (500 Internal Server Error): If an error occurs.
+        ```json
+        {
+            "detail": "Error fetching posts."
+        }
+        ```
+
+* **`GET /posts/milestones/`**
+[name='milestones-recent-posts']
+
+    *   Description: Retrieves recent posts with milestone tag. Supports cursor-based pagination.
+    *   Request: `GET`
+    *   Authentication: Optional (some fields like `has_liked` depend on authentication)
+    *   Query Parameters:
+        *   `page`: (optional, default: 1) The page number for pagination.
+        *   `page_size`: (optional, default: 10) Number of posts to return per page.
+        *   `session_id`: (optional) A unique string to ensure consistent feed order for a session. If not provided, a new session ID is generated.
+    *   Response (200 OK): Returns a paginated list of recent posts with milestone tag.
+        ```json
+        {
+            "results": [
+                {
+                    "id": "post_id",
+                    "content": "Post content",
+                    "timestamp": "2025-07-22T12:34:56Z",
+                    "author_id": "org_user_id",
+                    "has_liked": false,
+                    "has_rewarded": true,
+                    "media_urls": [],
+                    // ...other post fields...
+                }
+            ],
+            "session_id": "abc123-session-id",
+            "page": 1,
+            "page_size": 10,
+            "has_next": true
+        }
+        ```
+    *   Response (200 OK, empty): If no posts are found.
+        ```json
+        {
+            "results": [],
+            "session_id": "abc123-session-id",
+            "page": 1,
+            "page_size": 10,
+            "has_next": false
+        }
+        ```
+    *   Response (500 Internal Server Error): If an error occurs.
+        ```json
+        {
+            "detail": "Error fetching posts."
+        }
+        ```
 
 *   **`GET /official`**  [name='exclusive-orgs-recent-posts']
 
@@ -987,7 +1192,8 @@ This notification redirects the user to the parent post and highlights the new c
     "type": "comment",
     "post_id": "fskj34klj5h6g7f8d9s0a1",
     "comment_id": "a1b2c3d4e5f6g7h8i9j0k1",
-    "commenter_id": "23456789-abcd-efgh-ijkl-1234567890ab"
+    "commenter_id": "23456789-abcd-efgh-ijkl-1234567890ab",
+    "commenter_profile_pic_url":"hbvkyfqvegwfvjwgvfoyewvf"
 }
 
 ### 2. Post Like or New Post (type: 'like' or 'new_post')
@@ -1023,7 +1229,8 @@ follower_display_name_slug	Direct to the User Profile Screen.	/profile/:follower
     "type": "follow",
     "follower_id": "12345678-abcd-efgh-ijkl-000000000001",
     "follower_name": "ashdcugwiugwrf",
-    "follower_display_name_slug": "dshwydyd-1"
+    "follower_display_name_slug": "dshwydyd-1",
+    "follower_profile_pic_url":"",
 }
 
 ## III. Client Implementation Notes
