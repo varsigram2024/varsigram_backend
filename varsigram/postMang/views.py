@@ -2080,6 +2080,61 @@ class UserPostsFirestoreView(APIView):
         except Exception as e:
             return Response({"error": f"Failed to retrieve posts for user: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+class FollowDepartmentView(APIView):
+    """Endpoint for a student to suggest students to follow in their department.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request, *args, **kwargs):
+        user = request.user
+
+        try:
+            current_student = Student.objects.select_related('user').get(user=user)
+        except Student.DoesNotExist:
+            return Response({"error": "Student profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        department = current_student.department
+        if not department:
+            return Response({"results": []}, status=status.HTTP_200_OK)
+
+        # Fetch students in the same department, excluding already followed and self
+        student_ct = ContentType.objects.get(model='student')
+        follows_qs = Follow.objects.filter(
+            follower_content_type=student_ct,
+            follower_object_id=current_student.id
+        )
+        followed_student_ids = set(follows_qs.filter(
+            followee_content_type=student_ct
+        ).values_list('followee_object_id', flat=True))
+
+        recommended_students = Student.objects.select_related('user').filter(
+            department__iexact=department
+        ).exclude(
+            id__in=followed_student_ids
+        ).exclude(
+            user=user
+        ).order_by('?')[:20]  # Limit to 20 suggestions
+
+        users_data = []
+        for student in recommended_students:
+            user_obj = getattr(student, 'user', None)
+            users_data.append({
+                "type": "student",
+                "id": student.id,
+                "user_id": user_obj.id if user_obj else None,
+                "name": student.name,
+                "faculty": student.faculty,
+                "department": student.department,
+                "display_name_slug": getattr(student, "display_name_slug", None),
+                "profile_pic_url": getattr(user_obj, "profile_pic_url", None),
+                "bio": getattr(user_obj, "bio", None),
+                "is_following": False,
+                "is_verified": getattr(user_obj, "is_verified", False),
+            })
+
+        return Response({"results": users_data}, status=status.HTTP_200_OK)
+        
 
 class WhoToFollowView(APIView):
     permission_classes = [permissions.IsAuthenticated]

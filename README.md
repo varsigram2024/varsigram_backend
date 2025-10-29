@@ -1043,7 +1043,49 @@ Most endpoints require authentication. Authentication is handled using token-bas
 **Notes:**
 - All follow/unfollow actions require authentication.
 - You can follow/unfollow between any combination of students and organizations.
-- The same endpoints
+
+#### **Department Follow Suggestions**
+
+- **`GET /follow/department/`**  
+  *Suggests students to follow from the authenticated user's department. Provides personalized follow recommendations based on shared department.*
+
+- **Authentication:**  
+  Required (JWT)
+
+- **Parameters:**
+  - No parameters required. Uses authenticated user's department automatically.
+
+- **Response (200 OK):**
+    ```json
+    {
+        "results": [
+            {
+                "type": "student",
+                "id": "string",
+                "user_id": "string",
+                "name": "string",
+                "department": "string",
+                "profile_pic_url": "string",
+                "is_verified": boolean,
+                "bio": "string"
+            }
+        ]
+    }
+    ```
+
+- **Error Responses:**
+  - `401 Unauthorized`: Authentication required
+  - `403 Forbidden`: User is not a student
+  - `404 Not Found`: User's student profile not found
+  - `400 Bad Request`: User has no department set
+
+- **Notes:**
+  - Limited to suggesting 20 students at a time
+  - Only suggests students from the same department
+  - Excludes students that are already being followed
+  - Excludes the requesting user from suggestions
+  - Results are randomized for variety
+  - Includes basic profile information for easy display
 
 *   **`GET /who-to-follow/` \[name='who-to-follow']**
 
