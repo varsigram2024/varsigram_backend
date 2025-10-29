@@ -1046,7 +1046,7 @@ Most endpoints require authentication. Authentication is handled using token-bas
 
 #### **Department Follow Suggestions**
 
-- **`GET /follow/department/`**  
+- **`GET /follow-department/`**  
   *Suggests students to follow from the authenticated user's department. Provides personalized follow recommendations based on shared department.*
 
 - **Authentication:**  
