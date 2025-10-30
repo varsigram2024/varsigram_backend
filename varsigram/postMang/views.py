@@ -1,3 +1,4 @@
+import redis
 from rest_framework import generics, permissions, filters
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -9,10 +10,13 @@ from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerialize
 from .utils import get_exclusive_org_user_ids, get_student_user_ids
 import logging
 import random
+import os
 import uuid
 from datetime import datetime, timezone, timedelta
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
+from django.conf import settings
+from .leaderboard_utils import key_weekly, key_monthly, key_alltime
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from notifications_app.tasks import notify_all_users_new_post
 from rest_framework.mixins import CreateModelMixin
@@ -2293,3 +2297,86 @@ class VerifiedOrgBadge(APIView):
                 return Response({"is_verified": False}, status=status.HTTP_200_OK)
         except Organization.DoesNotExist:
             return Response({"error": "Organization not found."}, status=status.HTTP_404_NOT_FOUND)
+
+REDIS_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/1')
+
+class RewardWeeklyLeaderboardView(APIView):
+    """
+    View to retrieve the weekly leaderboard for rewards.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        limit = int(request.query_params.get('limit', 50))
+        # default Redis url fallback if not in settings
+        r = redis.Redis.from_url(REDIS_URL)
+        key = key_weekly('points')
+        members = r.zrevrange(key, 0, limit - 1, withscores=True)
+        user_ids = [int(m.decode() if isinstance(m, bytes) else m) for m, _ in members]
+        users_map = {u.id: u for u in User.objects.filter(id__in=user_ids)}
+        results = []
+        for member, score in members:
+            uid = member.decode() if isinstance(member, bytes) else member
+            u = users_map.get(int(uid))
+            results.append({
+                'user_id': uid,
+                'score': score,
+                'name': (getattr(u, 'student', None) and u.student.name) or (getattr(u, 'organization', None) and u.organization.organization_name) or (u.email if u else None),
+                'profile_pic_url': getattr(u, 'profile_pic_url', None) if u else None,
+            })
+        return Response({'results': results}, status=status.HTTP_200_OK)
+
+
+class RewardMonthlyLeaderboardView(APIView):
+    """
+    View to retrieve the monthly leaderboard for rewards.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        limit = int(request.query_params.get('limit', 50))
+        r = redis.Redis.from_url(REDIS_URL)
+        key = key_monthly('points')
+        members = r.zrevrange(key, 0, limit - 1, withscores=True)
+        user_ids = [int(m.decode() if isinstance(m, bytes) else m) for m, _ in members]
+        users_map = {u.id: u for u in User.objects.filter(id__in=user_ids)}
+        results = []
+        for member, score in members:
+            uid = member.decode() if isinstance(member, bytes) else member
+            u = users_map.get(int(uid))
+            results.append({
+                'user_id': uid,
+                'score': score,
+                'name': (getattr(u, 'student', None) and u.student.name) or (getattr(u, 'organization', None) and u.organization.organization_name) or (u.email if u else None),
+                'profile_pic_url': getattr(u, 'profile_pic_url', None) if u else None,
+            })
+        return Response({'results': results}, status=status.HTTP_200_OK)
+
+class RewardYearlyLeaderboardView(APIView):
+    """
+    View to retrieve the yearly leaderboard for rewards.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        limit = int(request.query_params.get('limit', 50))
+        r = redis.Redis.from_url(REDIS_URL)
+        # For now we use the alltime key for yearly; you can add explicit yearly keys if desired
+        key = key_alltime('points')
+        members = r.zrevrange(key, 0, limit - 1, withscores=True)
+        user_ids = [int(m.decode() if isinstance(m, bytes) else m) for m, _ in members]
+        users_map = {u.id: u for u in User.objects.filter(id__in=user_ids)}
+        results = []
+        for member, score in members:
+            uid = member.decode() if isinstance(member, bytes) else member
+            u = users_map.get(int(uid))
+            results.append({
+                'user_id': uid,
+                'score': score,
+                'name': (getattr(u, 'student', None) and u.student.name) or (getattr(u, 'organization', None) and u.organization.organization_name) or (u.email if u else None),
+                'profile_pic_url': getattr(u, 'profile_pic_url', None) if u else None,
+            })
+        return Response({'results': results}, status=status.HTTP_200_OK)

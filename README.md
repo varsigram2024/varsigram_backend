@@ -54,6 +54,7 @@ Most endpoints require authentication. Authentication is handled using token-bas
             }
         }
         ```
+
     *   Response (201 Created): Returns a JWT token and a success message.
     *   Response (400 Bad Request): If registration fails (e.g., invalid input, email already exists, both student and organization provided, or neither).
 
@@ -1228,7 +1229,9 @@ This notification redirects the user to the parent post and highlights the new c
 | **`post_id`** | Direct to the Post Screen. | `/posts/:post_id` |
 | **`comment_id`** | Pass as a query parameter for scrolling/highlighting. | `?commentId=:comment_id` |
 
-**Example Server Payload:**
+---
+
+
 ```json
 {
     "type": "comment",
@@ -1237,13 +1240,15 @@ This notification redirects the user to the parent post and highlights the new c
     "commenter_id": "23456789-abcd-efgh-ijkl-1234567890ab",
     "commenter_profile_pic_url":"hbvkyfqvegwfvjwgvfoyewvf"
 }
+```
 
 ### 2. Post Like or New Post (type: 'like' or 'new_post')
 
 These actions redirect the user directly to the target post.
 
-Field Used	Action	Client Route Structure
-post_id	Direct to the Post Screen.	/posts/:post_id
+| Field Used | Action | Client Route Structure |
+| :--- | :--- | :--- |
+| **`post_id`** | Direct to the Post Screen. | `/posts/:post_id` |
 
 
 **Example Server Payload (Like):**
@@ -1255,13 +1260,15 @@ post_id	Direct to the Post Screen.	/posts/:post_id
     "post_id": "fskj34klj5h6g7f8d9s0a1",
     "liker_id": "23456789-abcd-efgh-ijkl-1234567890ab" 
 }
+```
 
 ### 3. New Follow (type: 'follow')
 
 This action redirects the user to the profile of the user who initiated the follow (the follower).
 
-Field Used	Action	Client Route Structure
-follower_display_name_slug	Direct to the User Profile Screen.	/profile/:follower_display_name_slug
+| Field Used | Action | Client Route Structure |
+| :--- | :--- | :--- |
+| **`follower_display_name_slug`** | Direct to the User Profile Screen. | `/profile/:follower_display_name_slug` |
 
 
 **Example Server Payload:**
@@ -1274,6 +1281,7 @@ follower_display_name_slug	Direct to the User Profile Screen.	/profile/:follower
     "follower_display_name_slug": "dshwydyd-1",
     "follower_profile_pic_url":"",
 }
+```
 
 ## III. Client Implementation Notes
 - Prioritization: The client should prioritize deep-linking based on the presence of the necessary ID fields. The check should prioritize follower_id for 'follow' events, and post_id for all others.
@@ -1286,28 +1294,30 @@ follower_display_name_slug	Direct to the User Profile Screen.	/profile/:follower
 
 ### Point Submission (RewardPointCreateView)
 
-    1. Reward Point Submission (UPSERT)
-This endpoint allows an authenticated user to submit points (a reward) to a post, initiating a transaction that is validated against Firestore data before being saved to the local database.
+#### 1. Reward Point Submission (UPSERT)
+    This endpoint allows an authenticated user to submit points (a reward) to a post, initiating a transaction that is validated against Firestore data before being saved to the local database.
 
-Detail	Specification
-Name	reward-submit
-URL	/api/v1/reward-points/
-Method	POST
-Authentication	Required (IsAuthenticated)
-Logic	UPSERT: If the giver has previously rewarded this post_id, the existing points are updated to the new value. If not, a new record is created. (Max 5 points total per user per post enforced).
+    Detail	Specification
+    Name	reward-submit
+    URL	/api/v1/reward-points/
+    Method	POST
+    Authentication	Required (IsAuthenticated)
+    Logic	UPSERT: If the giver has previously rewarded this post_id, the existing points are updated to the new value. If not, a new record is created. (Max 5 points total per user per post enforced).
 
-Request Payload (POST Body)
-Field	Type	Description
-post_id	string (max 100)	The unique ID of the Post document in Firestore.
-points	integer	The point value to assign (Must be between 1 and 5).
+    Request Payload (POST Body)
+    Field	Type	Description
+    post_id	string (max 100)	The unique ID of the Post document in Firestore.
+    points	integer	The point value to assign (Must be between 1 and 5).
 
-
+```
 JSON
 
 {
     "post_id": "fkewp0ldfIxpT3m7uYGh",
     "points": 4
 }
+```
+
 Data Flow Summary (on POST)
 Serializer receives post_id and points.
 
@@ -1317,27 +1327,28 @@ Serializer enforces the 1-5 point limit.
 
 Transaction is saved/updated in the Postgres RewardPointTransaction table, linking the giver, the firestore_post_id, and the denormalized post_author.
 
-2. User Total Points Retrieval (PUBLIC)
-This endpoint retrieves the aggregated total points received by a specific user across all their posts. This information is publicly viewable by any authenticated user.
+#### 2. User Total Points Retrieval (PUBLIC)
+    This endpoint retrieves the aggregated total points received by a specific user across all their posts. This information is publicly viewable by any authenticated user.
 
-Detail	Specification
-Name	profile-points-public
-URL	/api/v1/profile/points/<int:pk>/
-Method	GET
-Authentication	Required (IsAuthenticated)
-Logic	Aggregates the SUM(points) from all RewardPointTransaction records where the post_author matches the requested User ID (pk).
-
-
-Request Payload
-No request body is required. The target user is identified via the URL path.
-
-Success Response (HTTP 200 OK)
-Field	Type	Description
-id	integer	The local ID (pk) of the user whose score is being returned.
-username	string	The username of the user.
-total_points_received	integer	The total number of points received from all rewards across all their posts.
+    Detail	Specification
+    Name	profile-points-public
+    URL	/api/v1/profile/points/<int:pk>/
+    Method	GET
+    Authentication	Required (IsAuthenticated)
+    Logic	Aggregates the SUM(points) from all RewardPointTransaction records where the post_author matches the requested User ID (pk).
 
 
+    Request Payload
+    No request body is required. The target user is identified via the URL path.
+
+    Success Response (HTTP 200 OK)
+    Field	Type	Description
+    id	integer	The local ID (pk) of the user whose score is being returned.
+    username	string	The username of the user.
+    total_points_received	integer	The total number of points received from all rewards across all their posts.
+
+
+```
 JSON
 
 /* Requesting the score for User ID 42 */
@@ -1347,9 +1358,9 @@ JSON
     "username": "UserB",
     "total_points_received": 156
 }
+```
 
-
-1. Social Links Update
+### Social Links Update
 This endpoint allows an authenticated user to update their social media and website links. It performs a partial update, meaning only the fields provided in the payload will be changed.
 
 Detail	Specification
@@ -1373,9 +1384,12 @@ JSON
     "linkedin_url": "https://linkedin.com/in/varsigram_dev",
     "instagram_url": "https://instagram.com/varsigram_official"
 }
+```
+
 Success Response (HTTP 200 OK)
 The response returns the updated social link data for the authenticated user.
 
+```
 JSON
 
 {
@@ -1384,9 +1398,12 @@ JSON
     "twitter_url": null,
     "website_url": null
 }
+```
+
 Error Response Example (HTTP 400 Bad Request)
 If an invalid URL format is submitted:
 
+```
 JSON
 
 {
@@ -1394,4 +1411,115 @@ JSON
         "Enter a valid URL."
     ]
 }
+```
 
+## Leaderboards (Rewards)
+
+These endpoints expose leaderboards based on reward points given to post authors. Leaderboards are powered by Redis sorted sets and are updated in near-real-time when `RewardPointTransaction` records are created; periodic Celery tasks are used to recompute snapshots for reconciliation.
+
+Common behavior
+- Authentication: Required (IsAuthenticated)
+- Metric: `points` (sum of RewardPointTransaction.points for a post author)
+- Paging: `limit` query parameter (default: 50)
+- Source of truth: Postgres `RewardPointTransaction` table. Redis is used for fast reads.
+
+### Weekly Leaderboard
+
+- Name: `reward-weekly`
+- URL: `/api/v1/leaderboard/rewards/weekly/`
+- Method: `GET`
+
+- Query Parameters:
+    - `limit` (optional, integer, default 50) — number of top users to return
+    - `week_start` (optional, ISO date YYYY-MM-DD) — choose a week by any date within it; defaults to current week
+
+- Success Response (200 OK):
+```json
+{
+    "results": [
+        {"rank": 1, "user_id": "42", "score": 120, "name": "Alice", "profile_pic_url": "https://..."},
+        {"rank": 2, "user_id": "17", "score": 98, "name": "Bob", "profile_pic_url": null}
+    ]
+}
+```
+
+- Error Responses:
+    - `401 Unauthorized` — authentication required
+    - `400 Bad Request` — invalid `week_start` format
+
+- Notes:
+    - Reads the Redis key `leaderboard:points:weekly:<YYYY>-W<WW>` by default (current ISO week if no `week_start` provided).
+    - The leaderboard is updated on each RewardPointTransaction via a Django signal and incremented using Redis ZINCRBY. If you require historical consistency or a backfill, run the `recompute_points_daily` / `recompute_points_alltime` Celery tasks.
+
+### Monthly Leaderboard
+
+- Name: `reward-monthly`
+- URL: `/api/v1/leaderboard/rewards/monthly/`
+- Method: `GET`
+
+- Query Parameters:
+    - `limit` (optional, integer, default 50)
+    - `month` (optional, format `YYYY-MM`) — choose a specific month; defaults to current month
+
+- Success Response (200 OK):
+```json
+{
+    "results": [
+        {"rank": 1, "user_id": "42", "score": 540, "name": "Alice", "profile_pic_url": "https://..."},
+        {"rank": 2, "user_id": "17", "score": 430, "name": "Bob", "profile_pic_url": null}
+    ]
+}
+```
+
+- Error Responses:
+    - `401 Unauthorized`
+    - `400 Bad Request` — invalid `month` format
+
+- Notes:
+    - Reads the Redis key `leaderboard:points:monthly:YYYY-MM` when `month` provided, otherwise current month.
+    - Monthly keys are persisted for a configurable TTL (by default code sets multi-month retention). Use the Celery recompute task to regenerate historical keys.
+
+### Yearly / All-time Leaderboard
+
+- Name: `reward-yearly` (backed by all-time snapshot in current implementation)
+- URL: `/api/v1/leaderboard/rewards/yearly/`
+- Method: `GET`
+
+- Query Parameters:
+    - `limit` (optional, integer, default 50)
+
+- Success Response (200 OK):
+```json
+{
+    "results": [
+        {"rank": 1, "user_id": "42", "score": 4120, "name": "Alice", "profile_pic_url": "https://..."},
+        {"rank": 2, "user_id": "17", "score": 3890, "name": "Bob", "profile_pic_url": null}
+    ]
+}
+```
+
+- Error Responses:
+    - `401 Unauthorized`
+
+- Notes:
+    - The current implementation reads from the `leaderboard:points:alltime` Redis key. If you need strict per-year snapshots, implement yearly keys or run a periodic job that filters `RewardPointTransaction.created_at` by year and writes a yearly key.
+
+Backfill & maintenance commands
+- One-off recompute (all-time):
+```bash
+python manage.py shell -c "from postMang.tasks import recompute_points_alltime; recompute_points_alltime.delay()"
+```
+- Recompute daily snapshot for a date (YYYY-MM-DD):
+```bash
+python manage.py shell -c "from postMang.tasks import recompute_points_daily; recompute_points_daily.delay('2025-10-29')"
+```
+
+Quick Redis verification
+- Inspect top entries with `redis-cli`:
+```bash
+redis-cli ZREVRANGE leaderboard:points:alltime 0 9 WITHSCORES
+redis-cli ZREVRANGE leaderboard:points:daily:2025-10-29 0 9 WITHSCORES
+```
+
+Security & privacy
+- The leaderboard returns public profile metadata (display name and profile picture). If your product restricts this data, add permission checks or mask user identifiers for unauthenticated requests.

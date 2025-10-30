@@ -111,6 +111,14 @@ class FirebaseConfig(AppConfig):
         except Exception as e:
             print(f"Error connecting to Storage bucket {storage_bucket_name}: {e}")
             raise
+        # Import signals after app is ready so signal handlers are registered
+        try:
+            # Local import to avoid side-effects during Django setup
+            import postMang.signals as _post_mang_signals  # noqa: F401
+        except Exception:
+            # If signals fail to import, we don't want to crash the app startup here
+            # but we log the issue for later troubleshooting.
+            print("Warning: failed to import postMang.signals. Signal handlers may not be registered.")
 
 # Utility functions remain the same
 def get_firestore_db():

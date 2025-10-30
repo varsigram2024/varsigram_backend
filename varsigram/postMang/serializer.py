@@ -413,6 +413,10 @@ class RewardPointSerializer(serializers.ModelSerializer):
             # Attempt to create a new transaction (INSERT)
             instance = RewardPointTransaction.objects.create(**validated_data)
 
+            # Don't Notify if the giver is rewarding their own post
+            if validated_data['post_author'] == validated_data['giver']:
+                return instance
+
             send_push_notification(
                 user=validated_data['post_author'], # The author of the post receiving points
                 title="Your post received reward points!",

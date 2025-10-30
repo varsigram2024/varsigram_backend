@@ -10,6 +10,9 @@ from .views import (
     QuestionPostView, MilestonePostView, UpdatesPostView,
     RelatablePostView,
     FollowDepartmentView,
+    RewardMonthlyLeaderboardView,
+    RewardWeeklyLeaderboardView,
+    RewardYearlyLeaderboardView,
 )
 
 app_name = 'postMang'
@@ -42,5 +45,8 @@ urlpatterns = [
     path('who-to-follow/', WhoToFollowView.as_view(), name='who-to-follow'),
     path('verified-org-badge/', VerifiedOrgBadge.as_view(), name='verified-org-badge'),
     path('follow-department/', FollowDepartmentView.as_view(), name='follow-department'),
+    path('leaderboard/rewards/monthly/', RewardMonthlyLeaderboardView.as_view(), name='reward-monthly-leaderboard'),
+    path('leaderboard/rewards/weekly/', RewardWeeklyLeaderboardView.as_view(), name='reward-weekly-leaderboard'),
+    path('leaderboard/rewards/yearly/', RewardYearlyLeaderboardView.as_view(), name='reward-yearly-leaderboard'),
 
 ]
