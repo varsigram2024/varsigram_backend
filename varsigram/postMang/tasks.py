@@ -4,7 +4,7 @@ from django.conf import settings
 import redis
 from .models import RewardPointTransaction
 from .leaderboard_utils import key_daily, key_weekly, key_monthly, key_alltime
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 
 _r = None
@@ -47,4 +47,43 @@ def recompute_points_alltime():
     if qs:
         mapping = {str(item['post_author']): float(item['score']) for item in qs}
         pipe.zadd(key, mapping)
+    pipe.execute()
+
+
+@shared_task(bind=True)
+def recompute_points_weekly(self, date_iso: str):
+    """Recompute the weekly leaderboard for the ISO week that contains date_iso (YYYY-MM-DD).
+
+    Example: date_iso='2025-11-11' will recompute leaderboard for the ISO week containing 2025-11-11.
+    """
+    try:
+        target = datetime.fromisoformat(date_iso).date()
+    except Exception as e:
+        raise ValueError(f"Invalid date_iso: {date_iso}")
+
+    # Determine ISO week start (Monday) and end (Sunday)
+    iso_year, iso_week, _ = target.isocalendar()
+    # Python 3.8+ supports fromisocalendar
+    try:
+        week_start = datetime.fromisocalendar(iso_year, iso_week, 1).date()
+    except Exception:
+        # Fallback: compute approximate start
+        week_start = target - timedelta(days=target.weekday())
+
+    week_end = week_start + timedelta(days=6)
+
+    qs = RewardPointTransaction.objects.filter(
+        created_at__date__gte=week_start,
+        created_at__date__lte=week_end,
+    ).values('post_author').annotate(score=Sum('points'))
+
+    r = _get_redis()
+    key = key_weekly('points', week_start)
+    pipe = r.pipeline()
+    pipe.delete(key)
+    if qs:
+        mapping = {str(item['post_author']): float(item['score']) for item in qs}
+        pipe.zadd(key, mapping)
+    # Keep weekly snapshots for 180 days
+    pipe.expire(key, 60 * 60 * 24 * 180)
     pipe.execute()

@@ -2308,10 +2308,29 @@ class RewardWeeklyLeaderboardView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def get(self, request):
-        limit = int(request.query_params.get('limit', 50))
+        limit = int(request.query_params.get('limit', 100))
         # default Redis url fallback if not in settings
         r = redis.Redis.from_url(REDIS_URL)
-        key = key_weekly('points')
+        # Optional: accept `week_start` query param to look up a specific ISO week.
+        # Accept formats: YYYY-MM-DD (any date in the week) or YYYY-Www (e.g. 2025-W46)
+        week_param = request.query_params.get('week_start')
+        dt = None
+        if week_param:
+            try:
+                # Try parsing as ISO date first
+                dt = datetime.fromisoformat(week_param).date()
+            except Exception:
+                try:
+                    # Try ISO week representation like '2025-W46'
+                    if '-W' in week_param:
+                        parts = week_param.split('-W')
+                        y = int(parts[0])
+                        w = int(parts[1])
+                        dt = datetime.fromisocalendar(y, w, 1).date()
+                except Exception:
+                    return Response({'error': 'Invalid week_start format. Use YYYY-MM-DD or YYYY-Www'}, status=status.HTTP_400_BAD_REQUEST)
+
+        key = key_weekly('points', dt)
         members = r.zrevrange(key, 0, limit - 1, withscores=True)
         user_ids = [int(m.decode() if isinstance(m, bytes) else m) for m, _ in members]
         users_map = {u.id: u for u in User.objects.filter(id__in=user_ids)}
@@ -2336,7 +2355,7 @@ class RewardMonthlyLeaderboardView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def get(self, request):
-        limit = int(request.query_params.get('limit', 50))
+        limit = int(request.query_params.get('limit', 100))
         r = redis.Redis.from_url(REDIS_URL)
         key = key_monthly('points')
         members = r.zrevrange(key, 0, limit - 1, withscores=True)
@@ -2354,15 +2373,15 @@ class RewardMonthlyLeaderboardView(APIView):
             })
         return Response({'results': results}, status=status.HTTP_200_OK)
 
-class RewardYearlyLeaderboardView(APIView):
+class RewardAlltimeLeaderboardView(APIView):
     """
-    View to retrieve the yearly leaderboard for rewards.
+    View to retrieve the alltime leaderboard for rewards.
     """
     permission_classes = [permissions.IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
     def get(self, request):
-        limit = int(request.query_params.get('limit', 50))
+        limit = int(request.query_params.get('limit', 100))
         r = redis.Redis.from_url(REDIS_URL)
         # For now we use the alltime key for yearly; you can add explicit yearly keys if desired
         key = key_alltime('points')

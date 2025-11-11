@@ -12,7 +12,7 @@ from .views import (
     FollowDepartmentView,
     RewardMonthlyLeaderboardView,
     RewardWeeklyLeaderboardView,
-    RewardYearlyLeaderboardView,
+    RewardAlltimeLeaderboardView,
 )
 
 app_name = 'postMang'
@@ -47,6 +47,6 @@ urlpatterns = [
     path('follow-department/', FollowDepartmentView.as_view(), name='follow-department'),
     path('leaderboard/rewards/monthly/', RewardMonthlyLeaderboardView.as_view(), name='reward-monthly-leaderboard'),
     path('leaderboard/rewards/weekly/', RewardWeeklyLeaderboardView.as_view(), name='reward-weekly-leaderboard'),
-    path('leaderboard/rewards/yearly/', RewardYearlyLeaderboardView.as_view(), name='reward-yearly-leaderboard'),
+    path('leaderboard/rewards/alltime/', RewardAlltimeLeaderboardView.as_view(), name='reward-alltime-leaderboard'),
 
 ]

@@ -1413,113 +1413,121 @@ JSON
 }
 ```
 
-## Leaderboards (Rewards)
+## Leaderboards
 
-These endpoints expose leaderboards based on reward points given to post authors. Leaderboards are powered by Redis sorted sets and are updated in near-real-time when `RewardPointTransaction` records are created; periodic Celery tasks are used to recompute snapshots for reconciliation.
+This section explains exactly how the frontend should call and render leaderboards, what query parameters are supported, the expected response shape, and operational notes (keys, tasks, backfills).
 
-Common behavior
-- Authentication: Required (IsAuthenticated)
-- Metric: `points` (sum of RewardPointTransaction.points for a post author)
-- Paging: `limit` query parameter (default: 50)
-- Source of truth: Postgres `RewardPointTransaction` table. Redis is used for fast reads.
+Base paths (all under `/api/v1/`):
 
-### Weekly Leaderboard
+- Weekly: `/api/v1/leaderboard/rewards/weekly/` (name: `reward-weekly-leaderboard`)
+- Monthly: `/api/v1/leaderboard/rewards/monthly/` (name: `reward-monthly-leaderboard`)
+- Yearly: `/api/v1/leaderboard/rewards/alltime/` (name: `reward-alltime-leaderboard`)
 
-- Name: `reward-weekly`
-- URL: `/api/v1/leaderboard/rewards/weekly/`
-- Method: `GET`
+Authentication
+- All leaderboard endpoints require authentication (JWT). Include header:
 
-- Query Parameters:
-    - `limit` (optional, integer, default 50) — number of top users to return
-    - `week_start` (optional, ISO date YYYY-MM-DD) — choose a week by any date within it; defaults to current week
+```http
+Authorization: Bearer <your_token>
+```
 
-- Success Response (200 OK):
+Common query parameters
+- `limit` — integer. Number of rows to return. Default: 100 (top-100). Maximum: backend may cap; keep requests to <= 500.
+
+Weekly endpoint specifics
+- Supported query params:
+    - `limit` (optional, default 100)
+    - `week_start` (optional) — choose the week by passing either:
+        - an ISO date inside the week (YYYY-MM-DD), or
+        - an ISO week string like `YYYY-Www` (e.g. `2025-W45`).
+
+- Behavior:
+    - If `week_start` is omitted, the server uses the current UTC ISO week.
+    - The server reads Redis key `leaderboard:points:weekly:<YYYY>-W<WW>` (example: `leaderboard:points:weekly:2025-W45`).
+    - If the requested key is missing, the frontend can either show an empty view or request a backfill via the ops team (see Backfill below).
+
+- Example request (fetch top 10 for the week containing 2025-11-03):
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+    "https://<api-host>/api/v1/leaderboard/rewards/weekly/?limit=10&week_start=2025-11-03"
+```
+
+Monthly endpoint specifics
+- Supported query params:
+    - `limit` (optional, default 100)
+    - `month` (optional) — `YYYY-MM` (e.g. `2025-11`). If omitted, current UTC month is used.
+
+Alltime endpoint specifics
+- Supported query params:
+    - `limit` (optional, default 100)
+
+- Note: Current implementation returns the ALL-TIME snapshot (Redis key `leaderboard:points:alltime`). If you need calendar-year snapshots, ask the backend to add `yearly` keys or a filtering endpoint.
+
+Response schema (successful 200 OK)
 ```json
 {
     "results": [
-        {"rank": 1, "user_id": "42", "score": 120, "name": "Alice", "profile_pic_url": "https://..."},
-        {"rank": 2, "user_id": "17", "score": 98, "name": "Bob", "profile_pic_url": null}
+        {
+            "rank": 1,
+            "user_id": "42",
+            "score": 4120,
+            "name": "Alice",
+            "profile_pic_url": "https://...",
+            "display_name_slug": "alice-1"
+        }
+        // ... up to `limit` rows
     ]
 }
 ```
 
-- Error Responses:
-    - `401 Unauthorized` — authentication required
-    - `400 Bad Request` — invalid `week_start` format
+Client rendering guidance
+- Display rank, name, score, and avatar.
+- Use `display_name_slug` to deep-link to profile pages: `/profile/:display_name_slug`.
+- For the weekly view allow a week picker UI that sends `week_start` as an ISO date within the selected week. When the user selects a calendar week, compute any date within that week and send it as `week_start`.
 
-- Notes:
-    - Reads the Redis key `leaderboard:points:weekly:<YYYY>-W<WW>` by default (current ISO week if no `week_start` provided).
-    - The leaderboard is updated on each RewardPointTransaction via a Django signal and incremented using Redis ZINCRBY. If you require historical consistency or a backfill, run the `recompute_points_daily` / `recompute_points_alltime` Celery tasks.
+Edge cases & fallbacks
+- Missing Redis key: If the key for a requested period is not present, show an empty leaderboard and a small help text like "No data for this period yet". If historical data is required, request a backfill.
+- Stale data: Redis receives incremental updates via Django signals on each reward save; periodic Celery recomputes reconcile any drift. Assume near-real-time but accept small delays.
 
-### Monthly Leaderboard
+Redis keys (for debugging and verification)
+- All-time: `leaderboard:points:alltime`
+- Daily: `leaderboard:points:daily:<YYYY-MM-DD>`
+- Weekly: `leaderboard:points:weekly:<YYYY>-W<WW>` (ISO week)
+- Monthly: `leaderboard:points:monthly:<YYYY>-<MM>`
 
-- Name: `reward-monthly`
-- URL: `/api/v1/leaderboard/rewards/monthly/`
-- Method: `GET`
+Server-side tasks & backfills (ops)
+- Celery tasks in `postMang.tasks`:
+    - `recompute_points_daily(date_iso: str)` — recomputes the daily leaderboard for the given date (YYYY-MM-DD)
+    - `recompute_points_weekly(date_iso: str)` — recomputes the weekly leaderboard for the ISO week that contains `date_iso` (YYYY-MM-DD)
+    - `recompute_points_alltime()` — recomputes the all-time leaderboard
 
-- Query Parameters:
-    - `limit` (optional, integer, default 50)
-    - `month` (optional, format `YYYY-MM`) — choose a specific month; defaults to current month
+- Management command to backfill (useful for ops/backoffice): `manage.py backfill_leaderboards`
+    - Key flags:
+        - `--daily` (backfill daily snapshots)
+        - `--weekly` (backfill weekly snapshots)
+        - `--alltime` (recompute the all-time snapshot)
+        - `--from-date YYYY-MM-DD` and `--to-date YYYY-MM-DD` to restrict the range
+        - `--run-sync` to run the recompute functions synchronously instead of enqueueing Celery tasks
 
-- Success Response (200 OK):
-```json
-{
-    "results": [
-        {"rank": 1, "user_id": "42", "score": 540, "name": "Alice", "profile_pic_url": "https://..."},
-        {"rank": 2, "user_id": "17", "score": 430, "name": "Bob", "profile_pic_url": null}
-    ]
-}
-```
+- Examples:
+    - Backfill weekly snapshots for October 2025 synchronously:
 
-- Error Responses:
-    - `401 Unauthorized`
-    - `400 Bad Request` — invalid `month` format
-
-- Notes:
-    - Reads the Redis key `leaderboard:points:monthly:YYYY-MM` when `month` provided, otherwise current month.
-    - Monthly keys are persisted for a configurable TTL (by default code sets multi-month retention). Use the Celery recompute task to regenerate historical keys.
-
-### Yearly / All-time Leaderboard
-
-- Name: `reward-yearly` (backed by all-time snapshot in current implementation)
-- URL: `/api/v1/leaderboard/rewards/yearly/`
-- Method: `GET`
-
-- Query Parameters:
-    - `limit` (optional, integer, default 50)
-
-- Success Response (200 OK):
-```json
-{
-    "results": [
-        {"rank": 1, "user_id": "42", "score": 4120, "name": "Alice", "profile_pic_url": "https://..."},
-        {"rank": 2, "user_id": "17", "score": 3890, "name": "Bob", "profile_pic_url": null}
-    ]
-}
-```
-
-- Error Responses:
-    - `401 Unauthorized`
-
-- Notes:
-    - The current implementation reads from the `leaderboard:points:alltime` Redis key. If you need strict per-year snapshots, implement yearly keys or run a periodic job that filters `RewardPointTransaction.created_at` by year and writes a yearly key.
-
-Backfill & maintenance commands
-- One-off recompute (all-time):
 ```bash
-python manage.py shell -c "from postMang.tasks import recompute_points_alltime; recompute_points_alltime.delay()"
-```
-- Recompute daily snapshot for a date (YYYY-MM-DD):
-```bash
-python manage.py shell -c "from postMang.tasks import recompute_points_daily; recompute_points_daily.delay('2025-10-29')"
+python3 manage.py backfill_leaderboards --weekly --from-date 2025-10-01 --to-date 2025-10-31 --run-sync
 ```
 
-Quick Redis verification
-- Inspect top entries with `redis-cli`:
+    - Recompute all-time leaderboard (enqueue Celery task):
+
 ```bash
-redis-cli ZREVRANGE leaderboard:points:alltime 0 9 WITHSCORES
-redis-cli ZREVRANGE leaderboard:points:daily:2025-10-29 0 9 WITHSCORES
+python3 manage.py backfill_leaderboards --alltime
+# or from shell
+python3 -c "from postMang.tasks import recompute_points_alltime; recompute_points_alltime.delay()"
 ```
 
-Security & privacy
-- The leaderboard returns public profile metadata (display name and profile picture). If your product restricts this data, add permission checks or mask user identifiers for unauthenticated requests.
+Operational notes for frontend developers
+- Rate limiting & caching: Cache leaderboard responses client-side for 30–60 seconds to reduce load on the API if you expect many users refreshing frequently.
+- Feature flagging: If you plan A/B experiments on leaderboard visibility, request a backend feature flag instead of deploying client-side hacks.
+
+If you'd like, I can also add a dedicated `/leaderboard/rewards/alltime/` endpoint (semantic clarity) — it will just return the same `leaderboard:points:alltime` key but makes the API clearer for frontend usage.
+
+---
