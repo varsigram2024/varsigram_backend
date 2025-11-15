@@ -99,6 +99,9 @@ jobs:
             echo "Collecting static files..."
             python manage.py collectstatic --noinput --settings=varsigram.settings.staging
 
+            echo "Initializing/syncing Redis leaderboards from PostgreSQL..."
+            python manage.py init_leaderboards --settings=varsigram.settings.staging || echo "Note: init_leaderboards completed with warnings (this is normal on first run)"
+
             echo "Restarting Gunicorn service: ${{ secrets.SERVICE_NAME_STAGING }}"
             sudo systemctl restart ${{ secrets.SERVICE_NAME_STAGING }}
 
@@ -166,6 +169,9 @@ jobs:
 
             echo "Collecting static files..."
             python manage.py collectstatic --noinput --settings=varsigram.settings.production
+
+            echo "Initializing/syncing Redis leaderboards from PostgreSQL..."
+            python manage.py init_leaderboards --settings=varsigram.settings.production || echo "Note: init_leaderboards completed with warnings (this is normal on first run)"
 
             echo "Restarting Gunicorn service: ${{ secrets.SERVICE_NAME_PRODUCTION }}"
             sudo systemctl restart ${{ secrets.SERVICE_NAME_PRODUCTION }}

@@ -6,6 +6,9 @@ from django.db import IntegrityError
 from users.models import Student, Organization
 from rest_framework import serializers
 import logging
+import redis
+import os
+from .leaderboard_utils import period_keys
 from .utils import get_post_author_id_from_firestore
 from django.contrib.contenttypes.models import ContentType
 from notifications_app.utils import send_push_notification
@@ -347,7 +350,19 @@ class GenericFollowSerializer(serializers.ModelSerializer):
             )
         
         return follow
-    
+
+logger = logging.getLogger(__name__)
+
+# Get Redis connection
+_r = None
+def _get_redis():
+    global _r
+    if _r is None:
+        redis_url = os.environ.get('CELERY_BROKER_URL') or 'redis://localhost:6379/0'
+        _r = redis.Redis.from_url(redis_url)
+    return _r
+
+
 class RewardPointSerializer(serializers.ModelSerializer):
     """
     Serializer for creating a new RewardPointTransaction, integrating Firestore lookup.
@@ -397,6 +412,79 @@ class RewardPointSerializer(serializers.ModelSerializer):
         data['post_author'] = author_user
             
         return data
+    
+    def _update_redis_leaderboards(self, post_author_id, points, created_at):
+        """
+        Update all Redis leaderboards (daily, weekly, monthly, all-time) 
+        with the new points.
+        
+        Args:
+            post_author_id: The user ID who is receiving the points
+            points: The number of points to add
+            created_at: The datetime when the transaction was created
+        """
+        try:
+            r = _get_redis()
+            post_author_id_str = str(post_author_id)
+            
+            # Get all the leaderboard keys for this date
+            keys = period_keys('points', created_at.date())
+            
+            # Use a pipeline for atomic updates
+            pipe = r.pipeline()
+            
+            # Increment scores in all leaderboards
+            for key in keys:
+                pipe.zincrby(key, float(points), post_author_id_str)
+            
+            # Set expiry for time-based keys (not all-time)
+            # keys[0] = all-time (no expiry)
+            # keys[1] = daily
+            # keys[2] = weekly  
+            # keys[3] = monthly
+            pipe.expire(keys[1], 60 * 60 * 24 * 180)  # daily - 180 days
+            pipe.expire(keys[2], 60 * 60 * 24 * 180)  # weekly - 180 days
+            pipe.expire(keys[3], 60 * 60 * 24 * 180)  # monthly - 180 days
+            
+            pipe.execute()
+            
+            logger.info(f"Updated Redis leaderboards for user {post_author_id_str} with {points} points")
+            
+        except Exception as e:
+            # Log the error but don't fail the transaction
+            # The data is still in PostgreSQL and can be synced later
+            logger.error(f"Failed to update Redis leaderboards: {str(e)}", exc_info=True)
+
+    def _decrement_redis_leaderboards(self, post_author_id, old_points, created_at):
+        """
+        Decrement the old points from Redis leaderboards when updating.
+        
+        Args:
+            post_author_id: The user ID who received the points
+            old_points: The number of points to remove
+            created_at: The datetime when the transaction was created
+        """
+        try:
+            r = _get_redis()
+            post_author_id_str = str(post_author_id)
+            
+            # Get all the leaderboard keys for this date
+            keys = period_keys('points', created_at.date())
+            
+            # Use a pipeline for atomic updates
+            pipe = r.pipeline()
+            
+            # Decrement scores in all leaderboards
+            for key in keys:
+                pipe.zincrby(key, float(-old_points), post_author_id_str)
+            
+            pipe.execute()
+            
+            logger.info(f"Decremented {old_points} points from user {post_author_id_str} in Redis leaderboards")
+            
+        except Exception as e:
+            logger.error(f"Failed to decrement Redis leaderboards: {str(e)}", exc_info=True)
+
 
     def create(self, validated_data):
         # Set the giver from the request context
@@ -412,6 +500,13 @@ class RewardPointSerializer(serializers.ModelSerializer):
         try:
             # Attempt to create a new transaction (INSERT)
             instance = RewardPointTransaction.objects.create(**validated_data)
+
+            # ✨ NEW: Update Redis leaderboards
+            self._update_redis_leaderboards(
+                post_author_id=validated_data['post_author'].id,
+                points=validated_data['points'],
+                created_at=instance.created_at
+            )
 
             # Don't Notify if the giver is rewarding their own post
             if validated_data['post_author'] == validated_data['giver']:
@@ -437,6 +532,25 @@ class RewardPointSerializer(serializers.ModelSerializer):
             # If IntegrityError (due to UniqueConstraint) is raised, UPDATE the existing record instead (UPSERT)
             try:
                 instance = RewardPointTransaction.objects.get(**unique_fields)
+                
+                # Store old points before update
+                old_points = instance.points
+                
+                # ✨ NEW: If points changed, update Redis
+                if old_points != validated_data['points']:
+                    # Remove old points
+                    self._decrement_redis_leaderboards(
+                        post_author_id=instance.post_author.id,
+                        old_points=old_points,
+                        created_at=instance.created_at
+                    )
+                    
+                    # Add new points
+                    self._update_redis_leaderboards(
+                        post_author_id=instance.post_author.id,
+                        points=validated_data['points'],
+                        created_at=instance.created_at
+                    )
                 
                 # Perform the update
                 instance.points = validated_data['points']
