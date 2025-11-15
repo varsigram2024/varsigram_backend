@@ -1468,12 +1468,10 @@ Response schema (successful 200 OK)
 {
     "results": [
         {
-            "rank": 1,
             "user_id": "42",
             "score": 4120,
             "name": "Alice",
             "profile_pic_url": "https://...",
-            "display_name_slug": "alice-1"
         }
         // ... up to `limit` rows
     ]
@@ -1500,34 +1498,5 @@ Server-side tasks & backfills (ops)
     - `recompute_points_daily(date_iso: str)` — recomputes the daily leaderboard for the given date (YYYY-MM-DD)
     - `recompute_points_weekly(date_iso: str)` — recomputes the weekly leaderboard for the ISO week that contains `date_iso` (YYYY-MM-DD)
     - `recompute_points_alltime()` — recomputes the all-time leaderboard
-
-- Management command to backfill (useful for ops/backoffice): `manage.py backfill_leaderboards`
-    - Key flags:
-        - `--daily` (backfill daily snapshots)
-        - `--weekly` (backfill weekly snapshots)
-        - `--alltime` (recompute the all-time snapshot)
-        - `--from-date YYYY-MM-DD` and `--to-date YYYY-MM-DD` to restrict the range
-        - `--run-sync` to run the recompute functions synchronously instead of enqueueing Celery tasks
-
-- Examples:
-    - Backfill weekly snapshots for October 2025 synchronously:
-
-```bash
-python3 manage.py backfill_leaderboards --weekly --from-date 2025-10-01 --to-date 2025-10-31 --run-sync
-```
-
-    - Recompute all-time leaderboard (enqueue Celery task):
-
-```bash
-python3 manage.py backfill_leaderboards --alltime
-# or from shell
-python3 -c "from postMang.tasks import recompute_points_alltime; recompute_points_alltime.delay()"
-```
-
-Operational notes for frontend developers
-- Rate limiting & caching: Cache leaderboard responses client-side for 30–60 seconds to reduce load on the API if you expect many users refreshing frequently.
-- Feature flagging: If you plan A/B experiments on leaderboard visibility, request a backend feature flag instead of deploying client-side hacks.
-
-If you'd like, I can also add a dedicated `/leaderboard/rewards/alltime/` endpoint (semantic clarity) — it will just return the same `leaderboard:points:alltime` key but makes the API clearer for frontend usage.
 
 ---
