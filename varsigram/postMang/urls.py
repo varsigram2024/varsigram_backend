@@ -13,9 +13,6 @@ from .views import (
     RewardMonthlyLeaderboardView,
     RewardWeeklyLeaderboardView,
     RewardAlltimeLeaderboardView,
-    PostMonthlyLeaderboardView,
-    PostWeeklyLeaderboardView,
-    PostAlltimeLeaderboardView,
     TopPostersView,
 )
 
@@ -52,10 +49,7 @@ urlpatterns = [
     path('leaderboard/rewards/monthly/', RewardMonthlyLeaderboardView.as_view(), name='reward-monthly-leaderboard'),
     path('leaderboard/rewards/weekly/', RewardWeeklyLeaderboardView.as_view(), name='reward-weekly-leaderboard'),
     path('leaderboard/rewards/alltime/', RewardAlltimeLeaderboardView.as_view(), name='reward-alltime-leaderboard'),
-    # Posts leaderboards (top users by number of posts)
-    path('leaderboard/posts/monthly/', PostMonthlyLeaderboardView.as_view(), name='posts-monthly-leaderboard'),
-    path('leaderboard/posts/weekly/', PostWeeklyLeaderboardView.as_view(), name='posts-weekly-leaderboard'),
-    path('leaderboard/posts/alltime/', PostAlltimeLeaderboardView.as_view(), name='posts-alltime-leaderboard'),
+    # Top Posters
     path('users/top-posters/', TopPostersView.as_view(), name='users-top-posters'),
 
 ]
