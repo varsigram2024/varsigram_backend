@@ -7,6 +7,7 @@ from .leaderboard_utils import key_daily, key_weekly, key_monthly, key_alltime
 from datetime import datetime, timedelta, timezone as dt_timezone
 import os
 import logging
+from postMang.apps import get_firestore_db
 
 logger = logging.getLogger(__name__)
 
@@ -144,3 +145,46 @@ def recompute_points_monthly(self, date_iso: str = None):
     pipe.execute()
     
     logger.info(f"Recomputed monthly leaderboard for {target.year}-{target.month:02d}: {len(qs)} users")
+
+
+@shared_task
+def recompute_posts_alltime(populate_redis: bool = True):
+    """Recompute the all-time leaderboard for post counts from Firestore.
+
+    If `populate_redis` is True, writes the sorted set to Redis key `leaderboard:posts:alltime`.
+    """
+    try:
+        db = get_firestore_db()
+    except Exception as e:
+        logger.exception('Failed to get Firestore client')
+        return
+
+    counts = {}
+    try:
+        posts_ref = db.collection('posts')
+        for doc in posts_ref.stream():
+            data = doc.to_dict()
+            author_id = data.get('author_id')
+            if not author_id:
+                continue
+            counts[str(author_id)] = counts.get(str(author_id), 0) + 1
+    except Exception:
+        logger.exception('Failed scanning Firestore posts for post counts')
+        return
+
+    # Optionally populate Redis
+    if populate_redis:
+        try:
+            r = _get_redis()
+            key = 'leaderboard:posts:alltime'
+            pipe = r.pipeline()
+            pipe.delete(key)
+            if counts:
+                # zadd expects mapping of member:score
+                mapping = {uid: int(cnt) for uid, cnt in counts.items()}
+                pipe.zadd(key, mapping)
+            pipe.execute()
+        except Exception:
+            logger.exception('Failed to write posts leaderboard to Redis')
+
+    logger.info(f"Recomputed posts all-time leaderboard: {len(counts)} authors")

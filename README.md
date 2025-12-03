@@ -1499,4 +1499,66 @@ Server-side tasks & backfills (ops)
     - `recompute_points_weekly(date_iso: str)` — recomputes the weekly leaderboard for the ISO week that contains `date_iso` (YYYY-MM-DD)
     - `recompute_points_alltime()` — recomputes the all-time leaderboard
 
+### Posts leaderboard (top users by number of posts)
+
+We also expose leaderboards for users with the highest number of posts. These are updated in near-real-time when posts are created via the API and backed by Redis sorted sets.
+
+Base paths (all under `/api/v1/`):
+
+- Weekly: `/api/v1/leaderboard/posts/weekly/` (name: `posts-weekly-leaderboard`)
+- Monthly: `/api/v1/leaderboard/posts/monthly/` (name: `posts-monthly-leaderboard`)
+- All-time: `/api/v1/leaderboard/posts/alltime/` (name: `posts-alltime-leaderboard`)
+
+Query parameters
+- `limit` — integer. Number of rows to return. Default: 100.
+- `week_start` — for weekly endpoint, same formats as rewards (YYYY-MM-DD or YYYY-Www).
+
+Redis keys used
+- All-time: `leaderboard:posts:alltime`
+- Daily: `leaderboard:posts:daily:<YYYY-MM-DD>`
+- Weekly: `leaderboard:posts:weekly:<YYYY>-W<WW>`
+- Monthly: `leaderboard:posts:monthly:<YYYY>-<MM>`
+
+Example request (top-10 all-time posters):
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+    "https://<api-host>/api/v1/leaderboard/posts/alltime/?limit=10"
+```
+
+Response schema (200 OK)
+```json
+{
+    "results": [
+        {"user_id": "42", "score": 120, "name": "Alice", "profile_pic_url": "https://..."},
+        {"user_id": "17", "score": 98, "name": "Bob", "profile_pic_url": null}
+    ]
+}
+```
+
+Operational notes
+- Post counts are incremented when posts are created via the API (`POST /api/v1/posts/`). If posts are created outside the API (directly in Firestore), you may need to run a backfill to populate historical counts using the management command.
+
+### Top posters endpoint (fallback & on-demand compute)
+
+We also provide a convenience endpoint to list users with the highest total posts even if you don't run periodic backfills.
+
+- URL: `/api/v1/users/top-posters/` (name: `users-top-posters`)
+- Query params:
+    - `limit` (optional, default 100)
+    - `compute` (optional) — set to `true` to compute counts from Firestore on-demand if no cached Redis data exists. This operation can be slow for large datasets.
+
+- Behavior:
+    - If Redis key `leaderboard:posts:alltime` is present, the endpoint returns results from Redis.
+    - If Redis key is missing and `compute=true` is provided, the server will synchronously scan Firestore to compute counts and return top-N (and attempt to populate Redis for future calls).
+    - If Redis key is missing and `compute` is not provided, the endpoint now enqueues a background Celery backfill task (`recompute_posts_alltime`) and returns `202 Accepted`. Retry after a short while to read cached results.
+
+Example (force compute):
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+    "https://<api-host>/api/v1/users/top-posters/?limit=10&compute=true"
+```
+
+
 ---
