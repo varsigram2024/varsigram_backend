@@ -1,3 +1,4 @@
+import redis
 from rest_framework import generics, permissions, filters
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -9,14 +10,19 @@ from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerialize
 from .utils import get_exclusive_org_user_ids, get_student_user_ids
 import logging
 import random
+import os
 import uuid
 from datetime import datetime, timezone, timedelta
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Q
+from django.conf import settings
+from .leaderboard_utils import key_weekly, key_monthly, key_alltime
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from notifications_app.tasks import notify_all_users_new_post
 from rest_framework.mixins import CreateModelMixin
 from notifications_app.utils import send_push_notification
+from .signals import get_redis_client
+from .tasks import recompute_posts_alltime
 
 
 # Initialize Firestore client
@@ -2080,6 +2086,61 @@ class UserPostsFirestoreView(APIView):
         except Exception as e:
             return Response({"error": f"Failed to retrieve posts for user: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+class FollowDepartmentView(APIView):
+    """Endpoint for a student to suggest students to follow in their department.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request, *args, **kwargs):
+        user = request.user
+
+        try:
+            current_student = Student.objects.select_related('user').get(user=user)
+        except Student.DoesNotExist:
+            return Response({"error": "Student profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        department = current_student.department
+        if not department:
+            return Response({"results": []}, status=status.HTTP_200_OK)
+
+        # Fetch students in the same department, excluding already followed and self
+        student_ct = ContentType.objects.get(model='student')
+        follows_qs = Follow.objects.filter(
+            follower_content_type=student_ct,
+            follower_object_id=current_student.id
+        )
+        followed_student_ids = set(follows_qs.filter(
+            followee_content_type=student_ct
+        ).values_list('followee_object_id', flat=True))
+
+        recommended_students = Student.objects.select_related('user').filter(
+            department__iexact=department
+        ).exclude(
+            id__in=followed_student_ids
+        ).exclude(
+            user=user
+        ).order_by('?')[:20]  # Limit to 20 suggestions
+
+        users_data = []
+        for student in recommended_students:
+            user_obj = getattr(student, 'user', None)
+            users_data.append({
+                "type": "student",
+                "id": student.id,
+                "user_id": user_obj.id if user_obj else None,
+                "name": student.name,
+                "faculty": student.faculty,
+                "department": student.department,
+                "display_name_slug": getattr(student, "display_name_slug", None),
+                "profile_pic_url": getattr(user_obj, "profile_pic_url", None),
+                "bio": getattr(user_obj, "bio", None),
+                "is_following": False,
+                "is_verified": getattr(user_obj, "is_verified", False),
+            })
+
+        return Response({"results": users_data}, status=status.HTTP_200_OK)
+        
 
 class WhoToFollowView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -2238,3 +2299,204 @@ class VerifiedOrgBadge(APIView):
                 return Response({"is_verified": False}, status=status.HTTP_200_OK)
         except Organization.DoesNotExist:
             return Response({"error": "Organization not found."}, status=status.HTTP_404_NOT_FOUND)
+
+REDIS_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/1')
+
+class RewardWeeklyLeaderboardView(APIView):
+    """
+    View to retrieve the weekly leaderboard for rewards.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        limit = int(request.query_params.get('limit', 100))
+        # default Redis url fallback if not in settings
+        r = redis.Redis.from_url(REDIS_URL)
+        # Optional: accept `week_start` query param to look up a specific ISO week.
+        # Accept formats: YYYY-MM-DD (any date in the week) or YYYY-Www (e.g. 2025-W46)
+        week_param = request.query_params.get('week_start')
+        dt = None
+        if week_param:
+            try:
+                # Try parsing as ISO date first
+                dt = datetime.fromisoformat(week_param).date()
+            except Exception:
+                try:
+                    # Try ISO week representation like '2025-W46'
+                    if '-W' in week_param:
+                        parts = week_param.split('-W')
+                        y = int(parts[0])
+                        w = int(parts[1])
+                        dt = datetime.fromisocalendar(y, w, 1).date()
+                except Exception:
+                    return Response({'error': 'Invalid week_start format. Use YYYY-MM-DD or YYYY-Www'}, status=status.HTTP_400_BAD_REQUEST)
+
+        key = key_weekly('points', dt)
+        members = r.zrevrange(key, 0, limit - 1, withscores=True)
+        user_ids = [int(m.decode() if isinstance(m, bytes) else m) for m, _ in members]
+        users_map = {u.id: u for u in User.objects.filter(id__in=user_ids)}
+        results = []
+        for member, score in members:
+            uid = member.decode() if isinstance(member, bytes) else member
+            u = users_map.get(int(uid))
+            results.append({
+                'user_id': uid,
+                'score': score,
+                'name': (getattr(u, 'student', None) and u.student.name) or (getattr(u, 'organization', None) and u.organization.organization_name) or (u.email if u else None),
+                'profile_pic_url': getattr(u, 'profile_pic_url', None) if u else None,
+            })
+        return Response({'results': results}, status=status.HTTP_200_OK)
+
+
+class RewardMonthlyLeaderboardView(APIView):
+    """
+    View to retrieve the monthly leaderboard for rewards.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        limit = int(request.query_params.get('limit', 100))
+        r = redis.Redis.from_url(REDIS_URL)
+        key = key_monthly('points')
+        members = r.zrevrange(key, 0, limit - 1, withscores=True)
+        user_ids = [int(m.decode() if isinstance(m, bytes) else m) for m, _ in members]
+        users_map = {u.id: u for u in User.objects.filter(id__in=user_ids)}
+        results = []
+        for member, score in members:
+            uid = member.decode() if isinstance(member, bytes) else member
+            u = users_map.get(int(uid))
+            results.append({
+                'user_id': uid,
+                'score': score,
+                'name': (getattr(u, 'student', None) and u.student.name) or (getattr(u, 'organization', None) and u.organization.organization_name) or (u.email if u else None),
+                'profile_pic_url': getattr(u, 'profile_pic_url', None) if u else None,
+            })
+        return Response({'results': results}, status=status.HTTP_200_OK)
+
+class RewardAlltimeLeaderboardView(APIView):
+    """
+    View to retrieve the alltime leaderboard for rewards.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        limit = int(request.query_params.get('limit', 100))
+        r = redis.Redis.from_url(REDIS_URL)
+        # For now we use the alltime key for yearly; you can add explicit yearly keys if desired
+        key = key_alltime('points')
+        members = r.zrevrange(key, 0, limit - 1, withscores=True)
+        user_ids = [int(m.decode() if isinstance(m, bytes) else m) for m, _ in members]
+        users_map = {u.id: u for u in User.objects.filter(id__in=user_ids)}
+        results = []
+        for member, score in members:
+            uid = member.decode() if isinstance(member, bytes) else member
+            u = users_map.get(int(uid))
+            results.append({
+                'user_id': uid,
+                'score': score,
+                'name': (getattr(u, 'student', None) and u.student.name) or (getattr(u, 'organization', None) and u.organization.organization_name) or (u.email if u else None),
+                'profile_pic_url': getattr(u, 'profile_pic_url', None) if u else None,
+            })
+        return Response({'results': results}, status=status.HTTP_200_OK)
+
+
+class TopPostersView(APIView):
+    """
+    Return users ranked by total number of posts (all-time).
+
+    Behavior:
+    - If Redis key `leaderboard:posts:alltime` exists and has members, return top-N from Redis.
+    - Otherwise, if query param `compute=true` is provided, scan Firestore posts collection,
+      compute counts per `author_id`, optionally populate Redis, and return top-N.
+    - If neither condition is met, return 404 with instructions to run backfill or use compute=true.
+
+    Query params:
+    - `limit` (int, default 100)
+    - `compute` (bool, optional) — when true, compute counts from Firestore synchronously.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        limit = int(request.query_params.get('limit', 100))
+        compute = request.query_params.get('compute', 'false').lower() in ('1', 'true', 'yes')
+
+        # Try Redis first
+        try:
+            r = get_redis_client()
+            key = 'leaderboard:posts:alltime'
+            members = r.zrevrange(key, 0, limit - 1, withscores=True)
+            if members:
+                user_ids = [int(m.decode() if isinstance(m, bytes) else m) for m, _ in members]
+                users_map = {u.id: u for u in User.objects.filter(id__in=user_ids)}
+                results = []
+                for member, score in members:
+                    uid = member.decode() if isinstance(member, bytes) else member
+                    u = users_map.get(int(uid))
+                    results.append({
+                        'user_id': uid,
+                        'score': int(score),
+                        'name': (getattr(u, 'student', None) and u.student.name) or (getattr(u, 'organization', None) and u.organization.organization_name) or (u.email if u else None),
+                        'profile_pic_url': getattr(u, 'profile_pic_url', None) if u else None,
+                    })
+                return Response({'results': results}, status=status.HTTP_200_OK)
+        except Exception:
+            # Redis may be unavailable; fall through to compute option
+            logging.exception('Redis unavailable when fetching top posters')
+
+        if not compute:
+            # Enqueue background backfill task and return 202 Accepted
+            try:
+                recompute_posts_alltime.delay()
+                return Response({'status': 'accepted', 'message': 'Background backfill started. Please retry after a short while.'}, status=status.HTTP_202_ACCEPTED)
+            except Exception:
+                logging.exception('Failed to enqueue posts backfill task')
+                return Response({'error': 'No cached data and failed to start backfill. Try ?compute=true or run the backfill management command.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Compute counts from Firestore (synchronous; may be slow)
+        counts = {}
+        try:
+            posts_ref = db.collection('posts')
+            for doc in posts_ref.stream():
+                data = doc.to_dict()
+                author_id = data.get('author_id')
+                if not author_id:
+                    continue
+                counts[author_id] = counts.get(author_id, 0) + 1
+
+            # Convert to sorted list
+            sorted_items = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+
+            # Optionally populate Redis for future requests
+            try:
+                r = get_redis_client()
+                pipe = r.pipeline()
+                key = 'leaderboard:posts:alltime'
+                # Replace the sorted set
+                pipe.delete(key)
+                for uid, cnt in sorted_items:
+                    pipe.zadd(key, {str(uid): int(cnt)})
+                # Set no expiry for alltime
+                pipe.execute()
+            except Exception:
+                logging.exception('Failed to populate Redis with top posters')
+
+            # Hydrate user info from Postgres
+            user_ids = [int(uid) for uid, _ in sorted_items if str(uid).isdigit()]
+            users_map = {u.id: u for u in User.objects.filter(id__in=user_ids)}
+            results = []
+            for uid, cnt in sorted_items:
+                u = users_map.get(int(uid)) if str(uid).isdigit() else None
+                results.append({
+                    'user_id': uid,
+                    'score': int(cnt),
+                    'name': (getattr(u, 'student', None) and u.student.name) or (getattr(u, 'organization', None) and u.organization.organization_name) or (u.email if u else None),
+                    'profile_pic_url': getattr(u, 'profile_pic_url', None) if u else None,
+                })
+            return Response({'results': results}, status=status.HTTP_200_OK)
+        except Exception:
+            logging.exception('Failed to compute top posters from Firestore')
+            return Response({'error': 'Failed to compute top posters'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

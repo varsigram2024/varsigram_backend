@@ -220,6 +220,29 @@ CELERY_TIMEZONE = 'Africa/Lagos' # Consistent with TIME_ZONE
 CELERY_ENABLE_UTC = True # Always good practice
 CELERY_RESULT_BACKEND = 'django-db'
 
+# Celery Beat schedule: periodic reconciliation jobs for leaderboards
+from celery.schedules import crontab
+
+# Run daily recompute for previous day at 00:10 UTC
+CELERY_BEAT_SCHEDULE = {
+    'recompute-points-daily-midnight-utc': {
+        'task': 'postMang.tasks.recompute_points_daily',
+        'schedule': crontab(minute=10, hour=0),
+        'args': (),
+        # Note: To recompute the previous day, you can set args dynamically via a small wrapper task
+    },
+    'recompute-points-weekly-monday-utc': {
+        'task': 'postMang.tasks.recompute_points_weekly',
+        'schedule': crontab(minute=15, hour=0, day_of_week=1),
+        'args': (),
+    },
+    'recompute-points-alltime-daily': {
+        'task': 'postMang.tasks.recompute_points_alltime',
+        'schedule': crontab(minute=30, hour=1),
+        'args': (),
+    }
+}
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,

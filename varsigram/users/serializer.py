@@ -18,6 +18,9 @@ from django.utils.timezone import now
 from .tasks import send_reset_email
 from django.utils.translation import gettext_lazy as _
 from firebase_admin import auth
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class SocialLinksSerializer(serializers.ModelSerializer):
@@ -289,7 +292,7 @@ class PasswordResetSerializer(serializers.Serializer):
             # CRITICAL SECURITY STEP: Fail silently to prevent user enumeration.
             # The view should return a generic success message (HTTP 200/204) 
             # regardless of whether the email was found.
-            print(f"Password reset requested for non-existent email: {email}. Failing silently.")
+            logger.error(f"Password reset requested for non-existent email: {email}. Failing silently.")
             return
 
         # 1. Generate token and UID
@@ -311,7 +314,7 @@ class PasswordResetSerializer(serializers.Serializer):
         # username = user.student.name if hasattr(user, 'student') else user.organization.name if hasattr(user, 'organization') else "User"
         # Assuming send_reset_email.delay is available:
         send_reset_email.delay(email, reset_link)
-        print(f"DEBUG: Sending reset link to {email}: {reset_link}")
+        logger.info(f"DEBUG: Sending reset link to {email}: {reset_link}")
 
 
 # --- Password Reset Confirmation (New Password Submission) ---
