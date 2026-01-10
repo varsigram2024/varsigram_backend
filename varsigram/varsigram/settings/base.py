@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     'notifications_app',
     'corsheaders',
     'postMang',
+    'knowme',
     'django_celery_results',  # For storing task results in the database
     # 'postMang.apps.FirebaseConfig',  # Firebase configuration app - keep commented unless truly needed
 ]
@@ -162,6 +163,10 @@ EMAIL_PORT = int(os.environ.get('MAIL_PORT', default=587))
 EMAIL_HOST_USER = os.environ.get('MAIL_USERNAME', default=None)
 EMAIL_HOST_PASSWORD = os.environ.get('MAIL_PASSWORD', default=None)  # Ensure this is set in your environment
 DEFAULT_FROM_EMAIL = os.environ.get('MAIL_FROM_ADDRESS', default='no-reply@varsigram.com')
+
+# Firebase / Google Cloud Storage for Knowme photo uploads
+FIREBASE_CREDENTIAL_PATH = os.environ.get('FIREBASE_CREDENTIAL_PATH', default=None)
+FIREBASE_STORAGE_BUCKET = os.environ.get('FIREBASE_STORAGE_BUCKET', default=None)
 MAIL_FROM_NAME = os.environ.get('MAIL_FROM_NAME', default='Varsigram Support Team')
 
 
