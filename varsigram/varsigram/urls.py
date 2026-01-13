@@ -19,6 +19,7 @@ from users import urls as users_urls
 from chat import urls as chat_urls
 from postMang import urls as post_urls
 from notifications_app import urls as notify_urls
+from knowme import urls as knowme_urls
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -40,6 +41,7 @@ urlpatterns = [
     path('api/v1/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('api/v1/token/verify/', TokenVerifyView.as_view(), name='token_verify'),
     path('api/v1/notifications/', include(notify_urls, namespace='notifications_api')),
+    path('api/v1/', include(knowme_urls, namespace='knowme_api'))
     # path('callback/', GoogleLoginApi.as_view(), name='callback-sdk'),
     # path('redirect/', GoogleLoginRedirectApi.as_view(), name='redirect-sdk'),
 ]

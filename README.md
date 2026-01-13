@@ -734,6 +734,78 @@ Most endpoints require authentication. Authentication is handled using token-bas
 - Only organizations with `exclusive=True` are included.
 - If authenticated, the `has_liked` field reflects whether the current user has liked each post.
 
+---
+
+## Knowme (Walls & Members) ✅
+
+A lightweight feature for creating **Walls** and letting people **join** them with short profiles (optional photo). Images are uploaded to Firebase Storage and the API stores a public `photo_url` on the member record.
+
+**Base paths:**
+- `POST /api/v1/walls/` — Create a new wall (name, description, creator_email)
+- `GET /api/v1/walls/<uuid:id>/` — Retrieve wall details (name, description, member_count)
+- `GET /api/v1/walls/<uuid:wall_id>/members/` — List wall members (paginated)
+- `POST /api/v1/walls/<uuid:wall_id>/join/` — Join a wall (multipart form-data, optional image upload)
+
+### Models & important fields 🔧
+- **Wall**: `id` (UUID), `name`, `description`, `creator_email`, `created_at`
+- **WallMember**: `id`, `wall` (FK), `full_name`, `contact_info`, `interests`, `photo_url` (nullable), `joined_at`
+
+### Join Wall (Usage notes) 💡
+- Accepts `multipart/form-data` with fields: `full_name`, `contact_info`, `interests`, and optional file field `photo`.
+- The serializer accepts a write-only `photo` field; the view uploads the file to Firebase and stores the public `photo_url` on the `WallMember`.
+- Photo upload path: `knowme/<wall_id>/<random>.ext` in Firebase Storage. Public URL format:
+  `https://firebasestorage.googleapis.com/v0/b/<bucket-name>/o/<path>?alt=media`
+- If Firebase upload fails, the member is still created but `photo_url` may be `null` (upload errors are logged).
+- The operation is **open (AllowAny)** — authentication is not required.
+
+### Constraints & behaviors ⚠️
+- A wall is limited to **300 members**; attempts to join after the limit will return `400 Bad Request` with a message about the limit.
+- Member listing is paginated (default `page_size=50`, `max_page_size=100`). Use `?page=` and `?page_size=` query params.
+- On successful join, the backend schedules an asynchronous email to the wall creator with a link to the wall: `{FRONTEND_URL}/walls/{wall_id}` (via Celery task). Email scheduling failures do NOT block member creation.
+
+### Example: Join (multipart)
+Request (multipart/form-data):
+- `full_name=Jane Doe`
+- `contact_info=jane@example.com`
+- `interests=Photography, Art`
+- `photo` = image file (optional)
+
+Response (201 Created):
+```json
+{
+  "id": "<member_id>",
+  "full_name": "Jane Doe",
+  "contact_info": "jane@example.com",
+  "interests": "Photography, Art",
+  "photo_url": "https://... (or null)",
+  "joined_at": "2025-01-01T12:00:00Z"
+}
+```
+
+### Example: List Members (paginated)
+`GET /api/v1/walls/<wall_id>/members/?page=1`
+
+Response (200 OK):
+```json
+{
+  "count": 123,
+  "next": "...",
+  "previous": null,
+  "results": [
+    {
+      "id": "...",
+      "full_name": "Jane Doe",
+      "contact_info": "jane@example.com",
+      "interests": "Photography, Art",
+      "photo_url": "https://...",
+      "joined_at": "2025-01-01T12:00:00Z"
+    }
+  ]
+}
+```
+
+---
+
 # Comments API Documentation
 
 ---

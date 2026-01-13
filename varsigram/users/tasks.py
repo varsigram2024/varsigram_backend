@@ -102,3 +102,47 @@ def send_reset_email(self, email: str, reset_link: str):
     except Exception as exc:
         logger.critical(f"Unhandled Error sending reset link to {email}: {exc}")
         raise
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60
+)
+def send_wall_notification_email(self, recipient: str, wall_name: str, member_name: str, member_interests: str, link: str):
+    """Sends a notification email to a wall creator about a new member (async)."""
+    subject = f"New Member on your Wall: {wall_name}"
+    from_email = settings.DEFAULT_FROM_EMAIL
+
+    html_message = f"""
+    <html>
+        <body>
+            <p>Hello,</p>
+            <p><strong>{member_name}</strong> has just joined your wall "{wall_name}".</p>
+            <p>Interests: {member_interests}</p>
+            <p>View your wall: <a href=\"{link}\">{link}</a></p>
+            <br>
+            <p>The Varsigram Team</p>
+        </body>
+    </html>
+    """
+
+    try:
+        send_mail(
+            subject=subject,
+            message=f"{member_name} joined your wall '{wall_name}'. View: {link}",
+            from_email=from_email,
+            recipient_list=[recipient],
+            html_message=html_message,
+            fail_silently=False
+        )
+        logger.info(f"Wall notification email sent to {recipient} for wall {wall_name}")
+        return f"Wall notification email sent to {recipient}"
+
+    except SMTPException as exc:
+        logger.error(f"SMTP Error sending wall notification to {recipient}: {exc}")
+        raise self.retry(exc=exc, countdown=60)
+
+    except Exception as exc:
+        logger.critical(f"Unhandled Error sending wall notification to {recipient}: {exc}")
+        raise

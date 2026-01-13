@@ -49,5 +49,5 @@ CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'
 
 # Local Logging configuration (optional, can override base if needed)
 # For example, you might want more verbose logging in development
-LOGGING['handlers']['console']['level'] = 'DEBUG'
-LOGGING['loggers']['django']['level'] = 'DEBUG'
+# LOGGING['handlers']['console']['level'] = 'DEBUG'
+# LOGGING['loggers']['django']['level'] = 'DEBUG'
