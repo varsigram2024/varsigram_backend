@@ -1,6 +1,6 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from rest_framework.pagination import PageNumberPagination
 from rest_framework import status, generics
 # from django.core.exceptions import ObjectDoesNotExist
@@ -14,7 +14,8 @@ from .serializer import (
     RegisterSerializer, LoginSerializer, StudentUpdateSerializer, OrganizationUpdateSerializer,
     OrganizationProfileSerializer, StudentProfileSerializer,
     UserDeactivateSerializer, UserReactivateSerializer,
-    OTPVerificationSerializer, SendOTPSerializer, SocialLinksSerializer
+    OTPVerificationSerializer, SendOTPSerializer, SocialLinksSerializer,
+    ConfirmDeletionSerializer
 )
 # from django.core.mail import send_mail
 from .utils import clean_data
@@ -375,6 +376,49 @@ class UserReactivateView(generics.GenericAPIView):
             {"message": "Account reactivated successfully"},
             status=status.HTTP_200_OK
         )
+
+
+class AdminHardDeleteUserView(generics.GenericAPIView):
+    """ Admin-only endpoint to permanently delete a user by PK """
+    permission_classes = [IsAdminUser]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = ConfirmDeletionSerializer
+
+    def post(self, request, pk):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = User.objects.all_with_deleted().filter(pk=pk).first()
+        if not user:
+            raise NotFound("User not found")
+
+        user.hard_delete()
+        return Response({"message": "User permanently deleted."}, status=status.HTTP_204_NO_CONTENT)
+
+
+class SelfHardDeleteView(generics.GenericAPIView):
+    """ Endpoint for a user to permanently delete their own account. Requires confirm and password if applicable. """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = ConfirmDeletionSerializer
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        password = serializer.validated_data.get('password', None)
+        user = request.user
+
+        # If the user has a usable password, require it for extra safety
+        if user.has_usable_password():
+            if not password:
+                return Response({"password": ["Password is required for account deletion."]}, status=status.HTTP_400_BAD_REQUEST)
+            if not user.check_password(password):
+                return Response({"password": ["Incorrect password."]}, status=status.HTTP_400_BAD_REQUEST)
+
+        # perform deletion
+        user.hard_delete()
+        return Response({"message": "Your account has been permanently removed."}, status=status.HTTP_204_NO_CONTENT)
 
 class SendOTPView(generics.GenericAPIView):
     """ Send OTP to user email """

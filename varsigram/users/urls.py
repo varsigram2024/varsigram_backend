@@ -13,6 +13,8 @@ from .views import (
     GetSignedPostMediaUploadUrlView,
     SocialLinksUpdateView,
     GetSignedMediaUploadUrlView,
+    SelfHardDeleteView,
+    AdminHardDeleteUserView,
 )
 
 app_name = 'user'
@@ -31,6 +33,9 @@ urlpatterns = [
     path('users/search/', UserSearchView.as_view(), name='search'),
     path('deactivate/', UserDeactivateView.as_view(), name='user-deactivate'),
     path('reactivate/', UserReactivateView.as_view(), name='user-reactivate'),
+    # Hard delete endpoints
+    path('users/<int:pk>/hard-delete/', AdminHardDeleteUserView.as_view(), name='admin-hard-delete'),
+    path('profile/hard-delete/', SelfHardDeleteView.as_view(), name='self-hard-delete'),
     path('send-otp/', SendOTPView.as_view(), name='send-otp'),
     path('verify-otp/', VerifyOTPView.as_view(), name='verify-otp'),
     path('check-verification/', CheckUserVerification.as_view(), name='check-verification'),

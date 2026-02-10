@@ -38,6 +38,26 @@ class UserManager(BaseUserManager):
 
         return self.create_user(email, password, **extra_fields)
 
+    def hard_delete_user(self, user_or_id_or_email):
+        """
+        Permanently remove a user and related objects. Accepts a User instance, primary key (int), or email (str).
+        Returns True if a user was found and deleted, False otherwise.
+        """
+        from django.contrib.auth import get_user_model
+        UserModel = get_user_model()
+
+        if isinstance(user_or_id_or_email, UserModel):
+            user = user_or_id_or_email
+        elif isinstance(user_or_id_or_email, int):
+            user = self.all_with_deleted().filter(pk=user_or_id_or_email).first()
+        else:
+            user = self.all_with_deleted().filter(email=user_or_id_or_email).first()
+
+        if user:
+            user.hard_delete()
+            return True
+        return False
+
 class User(AbstractBaseUser, PermissionsMixin):
     """ Base User Model """
     email = models.EmailField(unique=True)
@@ -107,6 +127,101 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.received_rewards.aggregate(
             total=Sum('points')
         )['total'] or 0
+
+    def hard_delete(self, using=None, keep_parents=False):
+        """
+        Permanently delete the user and related objects. This bypasses soft-delete and is irreversible.
+
+        Steps taken:
+        - Remove Student/Organization profiles attached to the user (they use PROTECT on delete)
+        - Remove Follow entries that reference those profiles
+        - Remove reward transactions, messages, devices, and notifications tied to this user
+        - Finally delete the user row from the database
+        """
+        # Import locally to avoid circular imports at module load time
+        from django.contrib.contenttypes.models import ContentType
+        from django.db.models import Q
+
+        # Related models
+        try:
+            from postMang.models import RewardPointTransaction, Follow
+        except Exception:
+            RewardPointTransaction = None
+            Follow = None
+        try:
+            from chat.models import Message
+        except Exception:
+            Message = None
+        try:
+            from notifications_app.models import Device, Notification
+        except Exception:
+            Device = None
+            Notification = None
+
+        # Delete student/org profiles first (they protect the user on delete)
+        try:
+            student = getattr(self, 'student', None)
+            if student is not None:
+                student.delete()
+        except Exception:
+            pass
+
+        try:
+            organization = getattr(self, 'organization', None)
+            if organization is not None:
+                organization.delete()
+        except Exception:
+            pass
+
+        # Clean up Follow entries referencing the user's student/org records
+        if Follow is not None:
+            try:
+                if student is not None:
+                    ct = ContentType.objects.get_for_model(student.__class__)
+                    Follow.objects.filter(
+                        Q(follower_content_type=ct, follower_object_id=student.pk) |
+                        Q(followee_content_type=ct, followee_object_id=student.pk)
+                    ).delete()
+                if organization is not None:
+                    ct = ContentType.objects.get_for_model(organization.__class__)
+                    Follow.objects.filter(
+                        Q(follower_content_type=ct, follower_object_id=organization.pk) |
+                        Q(followee_content_type=ct, followee_object_id=organization.pk)
+                    ).delete()
+            except Exception:
+                pass
+
+        # Delete reward transactions where this user was giver or post_author
+        if RewardPointTransaction is not None:
+            try:
+                RewardPointTransaction.objects.filter(Q(giver=self) | Q(post_author=self)).delete()
+            except Exception:
+                pass
+
+        # Delete chat messages where user was sender or receiver
+        if Message is not None:
+            try:
+                Message.objects.filter(Q(sender=self) | Q(receiver=self)).delete()
+            except Exception:
+                pass
+
+        # Delete devices and notifications belonging to user
+        if Device is not None:
+            try:
+                Device.objects.filter(user=self).delete()
+            except Exception:
+                pass
+        if Notification is not None:
+            try:
+                Notification.objects.filter(user=self).delete()
+            except Exception:
+                pass
+
+        # NOTE: If you store profile pictures in Firebase Storage, you may want to remove them here.
+        # Consider adding an explicit helper to remove storage objects using your Firebase client.
+
+        # Finally remove the user row itself
+        super(User, self).delete(using=using, keep_parents=keep_parents)
 
 
 class Student(models.Model):

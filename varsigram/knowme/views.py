@@ -6,6 +6,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
+from django.core.exceptions import ValidationError as DjangoValidationError
 from uuid import uuid4
 import os
 from postMang.apps import get_firebase_storage_client
@@ -52,7 +53,12 @@ class JoinWallView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         wall_id = self.kwargs.get('wall_id')
-        wall = get_object_or_404(Wall, id=wall_id)
+        # Allow joining by UUID or by the 8-letter wall `code`
+        try:
+            wall = Wall.objects.get(id=wall_id)
+        except (ValueError, DjangoValidationError, Wall.DoesNotExist):
+            # Fallback: try lookup by the 8-letter `code` (case-insensitive)
+            wall = get_object_or_404(Wall, code=wall_id.upper())
 
         # --- OPTIMIZATION CHECK: Limit to 300 ---
         current_count = wall.members.count()
@@ -101,3 +107,43 @@ class JoinWallView(generics.CreateAPIView):
             member.interests,
             f"{settings.FRONTEND_URL}/walls/{wall.id}",
         )
+
+
+class JoinWallByCodeView(JoinWallView):
+    """Allow joining by 8-letter wall `code` via a dedicated route.
+
+    This maps the incoming `code` path parameter to the parent view's
+    `wall_id` kwarg so existing creation logic is reused.
+    """
+    def dispatch(self, request, *args, **kwargs):
+        code = kwargs.pop('code', None)
+        if code:
+            # parent expects `wall_id` in kwargs
+            kwargs['wall_id'] = code
+        return super().dispatch(request, *args, **kwargs)
+
+
+class WallDetailByCodeView(WallDetailView):
+    """Retrieve wall detail by 8-letter `code`.
+
+    This maps the `code` path param to the parent view's `id` kwarg.
+    """
+    def dispatch(self, request, *args, **kwargs):
+        code = kwargs.pop('code', None)
+        if code:
+            wall = get_object_or_404(Wall, code=code.upper())
+            kwargs['id'] = wall.id
+        return super().dispatch(request, *args, **kwargs)
+
+
+class WallMembersByCodeView(WallMembersListView):
+    """List wall members by 8-letter `code`.
+
+    Maps `code` to `wall_id` so parent list logic can be reused.
+    """
+    def dispatch(self, request, *args, **kwargs):
+        code = kwargs.pop('code', None)
+        if code:
+            wall = get_object_or_404(Wall, code=code.upper())
+            kwargs['wall_id'] = wall.id
+        return super().dispatch(request, *args, **kwargs)

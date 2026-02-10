@@ -402,6 +402,24 @@ class ChangePasswordSerializer(serializers.Serializer):
         user.save()
         return user
 
+        # implemented earlier
+
+
+class ConfirmDeletionSerializer(serializers.Serializer):
+    """Serializer used to confirm irreversible deletion actions.
+
+    Fields:
+    - confirm: boolean (required) — must be True
+    - password: optional string — used for self-delete verification
+    """
+    confirm = serializers.BooleanField()
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if not attrs.get('confirm'):
+            raise serializers.ValidationError({"confirm": "You must explicitly confirm this irreversible action."})
+        return attrs
+
 
 class UserSearchSerializer(serializers.Serializer):
     faculty = serializers.CharField(required=False)
