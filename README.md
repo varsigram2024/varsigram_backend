@@ -58,26 +58,6 @@ Most endpoints require authentication. Authentication is handled using token-bas
     *   Response (201 Created): Returns a JWT token and a success message.
     *   Response (400 Bad Request): If registration fails (e.g., invalid input, email already exists, both student and organization provided, or neither).
 
-*   **`POST /login/`**  [name='login']
-
-    *   Description: Logs in an existing user.
-    *   Request: `POST`
-    *   Request Body (JSON):
-        ```json
-        {
-            "email": "user@example.com",
-            "password": "password123"
-        }
-        ```
-    *   Response (200 OK): Returns a JWT token and a success message.
-    *   Response (401 Unauthorized): If login fails (e.g., incorrect credentials).
-
-*   **`POST /logout/`**  [name='logout']
-
-    *   Description: Logs out the current user (invalidates the token).
-    *   Request: `POST`
-    *   Authentication: Required
-    *   Response (200 OK): On successful logout.
 
 *   **`POST /password-reset/`**  [name='password-reset']
 
@@ -291,6 +271,21 @@ Most endpoints require authentication. Authentication is handled using token-bas
     *   Response (200 OK): Returns the public profile data and profile type.
 
 ---
+
+
+### Token / Session Notes (short)
+
+- **`POST /api/v1/token/`** — Obtain tokens. The login endpoint accepts an optional `remember_me` boolean in the request body to request a longer-lived refresh session. Example request body:
+
+    ```json
+    { "email": "you@example.com", "password": "secret", "remember_me": true }
+    ```
+
+- **`POST /api/v1/token/refresh/`** — Exchange a refresh token for a new access token (may rotate the refresh token depending on server configuration).
+
+- **`POST /api/v1/token/logout/`** — Blacklist a refresh token to immediately sign out that session. Provide the `refresh` token in the POST body.
+
+If you need precise request/response examples for any of these endpoints, tell me which one and I'll add a small example curl snippet.
 
 **Note:**  
 - All endpoints that modify or access sensitive data require authentication.

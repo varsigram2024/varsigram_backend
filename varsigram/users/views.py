@@ -23,6 +23,11 @@ from django.contrib.auth import get_user_model
 from django.utils.http import urlsafe_base64_decode
 from postMang.apps import get_firebase_storage_client
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
 # from django.core.exceptions import PermissionDenied, AuthenticationFailed
 # from django.conf import settings
 # from auth.oauth import (
@@ -103,6 +108,58 @@ class UserLogout(APIView):
         logout(request)
         msg = {'message': 'Logged Out Successfully'}
         return Response(data=msg, status=status.HTTP_200_OK)
+
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """Extends default serializer to accept `remember_me` and issue longer refresh tokens when requested."""
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        request = self.context.get('request')
+        remember_me = False
+        if request:
+            remember_me = bool(request.data.get('remember_me', False))
+
+        refresh = RefreshToken.for_user(self.user)
+        # If remember_me requested, extend refresh lifetime (e.g., 30 days)
+        if remember_me:
+            try:
+                from datetime import datetime, timezone, timedelta
+                exp = datetime.now(timezone.utc) + timedelta(days=30)
+                # set_exp expects a datetime in some simplejwt versions
+                if hasattr(refresh, 'set_exp'):
+                    refresh.set_exp(exp)
+                else:
+                    refresh['exp'] = int(exp.timestamp())
+            except Exception:
+                pass
+
+        data['refresh'] = str(refresh)
+        data['access'] = str(refresh.access_token)
+        return data
+
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer
+
+
+class LogoutAndBlacklistRefreshToken(APIView):
+    """Blacklists a refresh token provided in the request body. POST {"refresh": "<token>"}
+
+    Requires `rest_framework_simplejwt.token_blacklist` in INSTALLED_APPS and migrations applied.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        refresh_token = request.data.get('refresh')
+        if not refresh_token:
+            return Response({'detail': 'Missing refresh token.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+        except Exception as e:
+            return Response({'detail': 'Invalid token.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({'detail': 'Refresh token blacklisted.'}, status=status.HTTP_200_OK)
 
 # User = get_user_model()
 
