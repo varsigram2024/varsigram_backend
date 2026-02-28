@@ -126,6 +126,7 @@ class FirestorePostOutputSerializer(serializers.Serializer):
     # If you implement the 'has_liked' logic in your view:
     has_liked = serializers.BooleanField(read_only=True, required=False, help_text="True if the current authenticated user has liked this post.")
     has_rewarded = serializers.SerializerMethodField(read_only=True, required=False, help_text="True if the current authenticated user has rewarded this post.")
+    reward_point_count = serializers.IntegerField(read_only=True, required=False, default=0, help_text="Total reward points the post has received.")
     trending_score = serializers.IntegerField(default=0)
     
     # Firestore Timestamp objects need special handling for output
@@ -202,15 +203,16 @@ class FirestorePostOutputSerializer(serializers.Serializer):
         if not request or not request.user or not request.user.is_authenticated:
             return False
         
+        # If the view already attached a batched flag, prefer that to avoid an extra DB query
+        if isinstance(post_data, dict) and 'has_rewarded' in post_data:
+            return bool(post_data.get('has_rewarded'))
+
         # 2. Get the Firestore ID from the data dictionary
-        firestore_id = post_data.get('firestore_post_id') or post_data.get('post_id')
-        
+        firestore_id = post_data.get('firestore_post_id') or post_data.get('post_id') or post_data.get('id')
         if not firestore_id:
             return False
 
-        # 3. Perform a fast lookup in the local Postgres DB
-        # The logic checks if a transaction exists from the current user (giver) 
-        # to this specific Firestore post ID.
+        # 3. Fallback: perform a lookup in the local Postgres DB
         return RewardPointTransaction.objects.filter(
             giver=request.user,
             firestore_post_id=firestore_id

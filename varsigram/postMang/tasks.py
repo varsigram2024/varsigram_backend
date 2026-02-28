@@ -21,6 +21,129 @@ def _get_redis():
 
 
 @shared_task(bind=True)
+def fanout_post_to_followers(self, author_user_id: int, post_id: str, score_ts: float = None):
+    """Push a newly created post ID into followers' Redis feeds (push-on-write).
+
+    This task is safe to retry and will not raise on errors (logs instead).
+    """
+    try:
+        r = _get_redis()
+    except Exception:
+        logger.exception('Failed to get redis client for fanout')
+        return
+
+    try:
+        from .models import Student, Organization, Follow
+        from django.contrib.contenttypes.models import ContentType
+        student_ct = ContentType.objects.get(model='student')
+        org_ct = ContentType.objects.get(model='organization')
+
+        follower_user_ids = []
+        # find followers of author's profile
+        try:
+            user_id = int(author_user_id)
+        except Exception:
+            user_id = None
+
+        # Try student profile
+        student_qs = Student.objects.filter(user_id=author_user_id)
+        if student_qs.exists():
+            profile = student_qs.first()
+            follows = Follow.objects.filter(
+                followee_content_type=student_ct,
+                followee_object_id=profile.id
+            )
+        else:
+            org_qs = Organization.objects.filter(user_id=author_user_id)
+            if org_qs.exists():
+                profile = org_qs.first()
+                follows = Follow.objects.filter(
+                    followee_content_type=org_ct,
+                    followee_object_id=profile.id
+                )
+            else:
+                follows = Follow.objects.none()
+
+        student_follow_ids = [f.follower_object_id for f in follows.filter(follower_content_type=student_ct)]
+        org_follow_ids = [f.follower_object_id for f in follows.filter(follower_content_type=org_ct)]
+        if student_follow_ids:
+            follower_user_ids.extend(list(Student.objects.filter(id__in=student_follow_ids).values_list('user_id', flat=True)))
+        if org_follow_ids:
+            follower_user_ids.extend(list(Organization.objects.filter(id__in=org_follow_ids).values_list('user_id', flat=True)))
+
+        # include the author themselves
+        try:
+            follower_user_ids.append(int(author_user_id))
+        except Exception:
+            pass
+
+        score = score_ts or datetime.now(dt_timezone.utc).timestamp()
+        MAX_FEED_ITEMS = getattr(settings, 'REDIS_FEED_MAX_ITEMS', 500)
+        # Chunking to avoid huge single Celery tasks when an author has many followers
+        CHUNK_SIZE = getattr(settings, 'FANOUT_CHUNK_SIZE', 5000)
+
+        all_uids = list({int(u) for u in follower_user_ids if u is not None})
+        try:
+            if len(all_uids) <= CHUNK_SIZE:
+                # Small enough to do in this task
+                pipe = r.pipeline()
+                for uid in all_uids:
+                    key = f"feed:{uid}"
+                    pipe.zadd(key, {str(post_id): score})
+                    pipe.zremrangebyrank(key, 0, -MAX_FEED_ITEMS-1)
+                pipe.execute()
+            else:
+                # Dispatch chunked subtasks to handle fanout in parallel
+                chunks = [all_uids[i:i+CHUNK_SIZE] for i in range(0, len(all_uids), CHUNK_SIZE)]
+                for chunk in chunks:
+                    try:
+                        fanout_post_chunk.delay(chunk, post_id, score)
+                    except Exception:
+                        # Fallback to local execution for this chunk
+                        fa = fanout_post_chunk
+                        fa(chunk, post_id, score)
+                try:
+                    # Metric: count dispatched chunks
+                    r.incr('metrics:fanout:dispatched_chunks')
+                except Exception:
+                    pass
+        except Exception:
+            logger.exception('Error while performing chunked fanout')
+    except Exception:
+        logger.exception('fanout_post_to_followers failed')
+
+
+
+@shared_task(bind=True)
+def fanout_post_chunk(self, follower_user_ids, post_id: str, score_ts: float = None):
+    """Subtask to write a post id into a chunk of follower feeds."""
+    try:
+        r = _get_redis()
+    except Exception:
+        logger.exception('Failed to get redis client for fanout chunk')
+        return
+
+    score = score_ts or datetime.now(dt_timezone.utc).timestamp()
+    MAX_FEED_ITEMS = getattr(settings, 'REDIS_FEED_MAX_ITEMS', 500)
+    try:
+        pipe = r.pipeline()
+        for uid in set(follower_user_ids):
+            try:
+                key = f"feed:{int(uid)}"
+            except Exception:
+                key = f"feed:{uid}"
+            pipe.zadd(key, {str(post_id): score})
+            pipe.zremrangebyrank(key, 0, -MAX_FEED_ITEMS-1)
+        pipe.execute()
+        try:
+            r.incr('metrics:fanout:chunks')
+        except Exception:
+            pass
+    except Exception:
+        logger.exception('fanout_post_chunk failed')
+
+
+@shared_task(bind=True)
 def recompute_points_daily(self, date_iso: str):
     """Recompute the daily leaderboard for a specific date (YYYY-MM-DD)."""
     try:
