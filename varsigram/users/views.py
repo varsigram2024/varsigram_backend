@@ -625,6 +625,91 @@ class GetSignedUploadUrlView(APIView):
             )
 
 
+class UserDetailView(APIView):
+    """
+    Retrieve a user's profile by user_id (pk).
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        user = request.user if request.user.is_authenticated else None
+        is_following = False
+
+        try:
+            # Get the user by pk
+            target_user = User.objects.get(pk=pk)
+        except User.DoesNotExist:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Try to find a student with this user
+        student = Student.objects.filter(user=target_user).first()
+        if student:
+            student_ct = ContentType.objects.get(model='student')
+            # Followers: anyone following this student
+            followers_count = Follow.objects.filter(
+                followee_content_type=student_ct,
+                followee_object_id=student.id
+            ).count()
+            # Following: how many profiles this student is following
+            following_count = Follow.objects.filter(
+                follower_content_type=student_ct,
+                follower_object_id=student.id
+            ).count()
+
+            # Check if current user is following this student
+            if user and hasattr(user, 'student'):
+                follow_exists = Follow.objects.filter(
+                    follower_content_type=student_ct,
+                    follower_object_id=user.student.id,
+                    followee_content_type=student_ct,
+                    followee_object_id=student.id
+                ).exists()
+                is_following = follow_exists
+            serializer = StudentProfileSerializer(student)
+            return Response({
+                "profile_type": "student",
+                "profile": serializer.data,
+                "is_following": is_following,
+                "followers_count": followers_count,
+                "following_count": following_count,
+            })
+
+        # Try to find an organization with this user
+        organization = Organization.objects.filter(user=target_user).first()
+        if organization:
+            student_ct = ContentType.objects.get(model='student')
+            org_ct = ContentType.objects.get(model='organization')
+            # Followers: anyone following this organization
+            followers_count = Follow.objects.filter(
+                followee_content_type=org_ct,
+                followee_object_id=organization.id
+            ).count()
+            # Following: how many profiles this organization is following
+            following_count = Follow.objects.filter(
+                follower_content_type=org_ct,
+                follower_object_id=organization.id
+            ).count()
+
+            if user and hasattr(user, 'student'):
+                follow_exists = Follow.objects.filter(
+                    follower_content_type=student_ct,
+                    follower_object_id=user.student.id,
+                    followee_content_type=org_ct,
+                    followee_object_id=organization.id
+                ).exists()
+                is_following = follow_exists
+            serializer = OrganizationProfileSerializer(organization)
+            return Response({
+                "profile_type": "organization",
+                "profile": serializer.data,
+                "is_following": is_following,
+                "followers_count": followers_count,
+                "following_count": following_count,
+            })
+
+        return Response({"detail": "Profile not found for this user."}, status=status.HTTP_404_NOT_FOUND)
+
+
 class PublicProfileView(APIView):
     """
     Retrieve a user's public profile by display_name_slug.
