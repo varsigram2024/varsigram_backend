@@ -10,11 +10,12 @@ from .serializer import FirestoreCommentSerializer, FirestoreLikeOutputSerialize
 from .utils import get_exclusive_org_user_ids, get_student_user_ids
 import logging
 import random
+import hashlib
 import os
 import uuid
 from datetime import datetime, timezone, timedelta
 from django.contrib.contenttypes.models import ContentType
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.conf import settings
 from .leaderboard_utils import key_weekly, key_monthly, key_alltime
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -24,6 +25,205 @@ from notifications_app.utils import send_push_notification
 from .signals import get_redis_client
 from .tasks import recompute_posts_alltime
 
+# TTLs and keys
+REDIS_AUTHOR_TTL = getattr(settings, 'REDIS_AUTHOR_TTL', 60 * 60 * 24)  # 24 hours
+REDIS_LIKES_TTL = getattr(settings, 'REDIS_LIKES_TTL', 60 * 60 * 24 * 7)  # 7 days
+
+
+def batch_has_liked(user_id, post_ids):
+    """Return a set of post_ids that `user_id` has liked by checking Redis sets.
+
+    Falls back to empty set if Redis unavailable.
+    """
+    try:
+        r = get_redis_client()
+        key = f"user:likes:{user_id}"
+        pipe = r.pipeline()
+        for pid in post_ids:
+            pipe.sismember(key, str(pid))
+        results = pipe.execute()
+        liked = {str(pid) for pid, res in zip(post_ids, results) if res}
+        return liked
+    except Exception:
+        return set()
+
+
+def hydrate_authors_map(author_ids):
+    """Fetch author metadata from Redis hash cache, fall back to DB for misses, and populate cache."""
+    authors_map = {}
+    if not author_ids:
+        return authors_map
+    try:
+        r = get_redis_client()
+        pipe = r.pipeline()
+        keys = [f"user:meta:{aid}" for aid in author_ids]
+        for k in keys:
+            pipe.hgetall(k)
+        cached = pipe.execute()
+        misses = []
+        for aid, data in zip(author_ids, cached):
+            if data:
+                # decode bytes to strings if necessary
+                if isinstance(data, dict):
+                    decoded = {}
+                    for kk, vv in data.items():
+                        k = kk.decode() if isinstance(kk, bytes) else kk
+                        v = vv.decode() if isinstance(vv, bytes) else vv
+                        decoded[k] = v
+                    authors_map[str(aid)] = {
+                        'id': int(aid),
+                        'email': decoded.get('email'),
+                        'profile_pic_url': decoded.get('profile_pic_url'),
+                        'name': decoded.get('name'),
+                        'display_name_slug': decoded.get('display_name_slug'),
+                        'is_verified': decoded.get('is_verified') == 'True',
+                        'exclusive': decoded.get('exclusive') == 'True',
+                        'faculty': decoded.get('faculty'),
+                        'department': decoded.get('department'),
+                    }
+            else:
+                misses.append(aid)
+
+        if misses:
+            # Query DB for misses
+            authors_from_db = User.objects.filter(id__in=misses)
+            pipe = r.pipeline()
+            for author in authors_from_db:
+                author_name = None
+                display_name_slug = None
+                exclusive = False
+                author_faculty = None
+                author_department = None
+                if hasattr(author, 'student'):
+                    author_name = author.student.name
+                    display_name_slug = getattr(author.student, 'display_name_slug', None)
+                    author_faculty = getattr(author.student, 'faculty', None)
+                    author_department = getattr(author.student, 'department', None)
+                elif hasattr(author, 'organization'):
+                    author_name = author.organization.organization_name
+                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
+                    exclusive = getattr(author.organization, 'exclusive', False)
+
+                authors_map[str(author.id)] = {
+                    "id": author.id,
+                    "email": author.email,
+                    "profile_pic_url": author.profile_pic_url,
+                    "name": author_name,
+                    "display_name_slug": display_name_slug,
+                    "is_verified": author.is_verified,
+                    "exclusive": exclusive,
+                    "faculty": author_faculty,
+                    "department": author_department,
+                }
+                # write-back to redis
+                meta_key = f"user:meta:{author.id}"
+                pipe.hset(meta_key, mapping={
+                    'email': author.email or '',
+                    'profile_pic_url': author.profile_pic_url or '',
+                    'name': author_name or '',
+                    'display_name_slug': display_name_slug or '',
+                    'is_verified': str(author.is_verified),
+                    'exclusive': str(exclusive),
+                    'faculty': author_faculty or '',
+                    'department': author_department or '',
+                })
+                pipe.expire(meta_key, REDIS_AUTHOR_TTL)
+            try:
+                pipe.execute()
+            except Exception:
+                pass
+    except Exception:
+        # On any redis issue, fallback to DB-only hydration
+        authors_from_db = User.objects.filter(id__in=author_ids)
+        for author in authors_from_db:
+            author_name = None
+            display_name_slug = None
+            exclusive = False
+            author_faculty = None
+            author_department = None
+            if hasattr(author, 'student'):
+                author_name = author.student.name
+                display_name_slug = getattr(author.student, 'display_name_slug', None)
+                author_faculty = getattr(author.student, 'faculty', None)
+                author_department = getattr(author.student, 'department', None)
+            elif hasattr(author, 'organization'):
+                author_name = author.organization.organization_name
+                display_name_slug = getattr(author.organization, 'display_name_slug', None)
+                exclusive = getattr(author.organization, 'exclusive', False)
+
+            authors_map[str(author.id)] = {
+                "id": author.id,
+                "email": author.email,
+                "profile_pic_url": author.profile_pic_url,
+                "name": author_name,
+                "display_name_slug": display_name_slug,
+                "is_verified": author.is_verified,
+                "exclusive": exclusive,
+                "faculty": author_faculty,
+                "department": author_department,
+            }
+
+    return authors_map
+
+
+def get_session_rng(session_id):
+    """Return a local Random instance seeded by session_id (safe for concurrency)."""
+    try:
+        return random.Random(str(session_id))
+    except Exception:
+        return random.Random()
+
+
+def session_rank_score(seed, post_id, timestamp=None, recency_weight=0.2):
+    """Deterministic per-post pseudo-random score combined with optional recency bias.
+
+    - `seed`: session identifier
+    - `post_id`: unique post id
+    - `timestamp`: datetime (UTC) or None
+    - `recency_weight`: 0..1 weight for recency (higher favors newer posts)
+    Returns a float score where larger is better.
+    """
+    try:
+        key = f"{seed}:{post_id}"
+        h = hashlib.sha256(key.encode()).hexdigest()
+        rand = int(h, 16) / float(2 ** 256)
+    except Exception:
+        rand = random.random()
+
+    recency = 0.0
+    if timestamp:
+        try:
+            now = datetime.now(timezone.utc)
+            # If timestamp is a Firestore timestamp object, try to coerce
+            if hasattr(timestamp, 'timestamp') and callable(getattr(timestamp, 'timestamp')):
+                ts = timestamp
+            else:
+                ts = timestamp
+            age = max(0.0, (now - ts).total_seconds())
+            # Normalize recency: newer -> closer to 1. Use 7-day scale by default.
+            recency = 1.0 / (1.0 + (age / (7 * 24 * 3600)))
+        except Exception:
+            recency = 0.0
+
+    return recency_weight * recency + (1.0 - recency_weight) * rand
+
+
+def session_sort_posts(posts, session_id, recency_weight=0.2, timestamp_key='timestamp'):
+    """Sort posts in-place by deterministic session score (descending).
+
+    Each post should be a dict with an `id` and optionally `timestamp`.
+    """
+    if not posts:
+        return posts
+    seed = str(session_id)
+    scores = {}
+    for p in posts:
+        pid = str(p.get('id'))
+        ts = p.get(timestamp_key)
+        scores[pid] = session_rank_score(seed, pid, ts, recency_weight=recency_weight)
+
+    posts.sort(key=lambda x: scores.get(str(x.get('id')), 0.0), reverse=True)
+    return posts
 
 # Initialize Firestore client
 db = get_firestore_db()  # Get the Firestore client from the app config
@@ -192,9 +392,177 @@ class FeedView(APIView):
             session_id = request.query_params.get('session_id')
             if not session_id:
                 session_id = str(uuid.uuid4())
-            random.seed(session_id)
+            rng = get_session_rng(session_id)
 
             current_user = request.user
+            # Try to serve from precomputed Redis feed first (push-on-write)
+            try:
+                r = get_redis_client()
+                feed_key = f"feed:{current_user.id}"
+
+                # Support score-based cursor pagination: client may send `cursor=score:post_id`
+                cursor = request.query_params.get('cursor')
+                redis_post_ids = []
+                redis_with_scores = []
+
+                # Metrics: measure Redis read latency
+                import time
+                start_t = time.time()
+
+                if cursor:
+                    # Parse cursor and use ZREVRANGEBYSCORE to fetch items with score < last_score
+                    try:
+                        parts = cursor.split(':', 1)
+                        last_score = float(parts[0])
+                        # subtract a tiny epsilon to avoid returning the same score again
+                        max_score = last_score - 1e-6
+                    except Exception:
+                        max_score = '+inf'
+                    try:
+                        # returns list of (member, score) when withscores=True
+                        redis_with_scores = r.zrevrangebyscore(feed_key, max_score, '-inf', start=0, num=page_size, withscores=True)
+                    except Exception:
+                        redis_with_scores = []
+                else:
+                    # Fallback to legacy page-based zrevrange for compatibility
+                    start_idx = (page - 1) * page_size
+                    end_idx = start_idx + page_size - 1
+                    try:
+                        members = r.zrevrange(feed_key, start_idx, end_idx)
+                        redis_with_scores = [(m, None) for m in members]
+                    except Exception:
+                        redis_with_scores = []
+
+                elapsed_ms = int((time.time() - start_t) * 1000)
+                try:
+                    # Increment simple counters and record latency (trim list to last 1000 entries)
+                    r.incr('metrics:feed:reads')
+                    if redis_with_scores:
+                        r.incr('metrics:feed:redis_hits')
+                    else:
+                        r.incr('metrics:feed:redis_misses')
+                    r.lpush('metrics:feed:latencies', elapsed_ms)
+                    r.ltrim('metrics:feed:latencies', 0, 999)
+                except Exception:
+                    pass
+
+                if redis_with_scores:
+                    # Fetch posts from Firestore for these ids and return quickly
+                    posts = []
+                    author_ids = set()
+                    # Batch document fetch to reduce Firestore read overhead
+                    doc_refs = []
+                    id_map = []
+                    # normalize members and capture scores for cursor
+                    post_scores = []
+                    for member, score in redis_with_scores:
+                        pid_str = member.decode() if isinstance(member, bytes) else str(member)
+                        doc_refs.append(db.collection('posts').document(pid_str))
+                        id_map.append(pid_str)
+                        post_scores.append((pid_str, score))
+
+                    try:
+                        docs = list(db.get_all(doc_refs))
+                    except Exception:
+                        docs = []
+
+                    post_ids_in_order = []
+                    # Build a mapping of doc.id -> doc for stable ordering
+                    docs_map = {doc.id: doc for doc in docs if doc.exists}
+                    for pid_str, scr in post_scores:
+                        doc = docs_map.get(pid_str)
+                        if not doc:
+                            continue
+                        post_data = doc.to_dict()
+                        post_data['id'] = doc.id
+                        post_data['view_count'] = post_data.get('view_count', 0)
+                        post_data['like_count'] = post_data.get('like_count', 0)
+                        # set default; will fill via batch
+                        post_data['has_liked'] = False
+                        posts.append(post_data)
+                        post_ids_in_order.append(doc.id)
+                        if 'author_id' in post_data:
+                            author_ids.add(str(post_data['author_id']))
+
+                    # Build next_cursor if we have a full page
+                    next_cursor = None
+                    try:
+                        if len(post_scores) == page_size:
+                            last_pid, last_score = post_scores[-1]
+                            if last_score is not None:
+                                next_cursor = f"{float(last_score)}:{last_pid}"
+                    except Exception:
+                        next_cursor = None
+
+                    # Batch resolve has_liked using Redis and hydrate authors via cache
+                    if post_ids_in_order and current_user:
+                        try:
+                            liked = batch_has_liked(str(current_user.id), post_ids_in_order)
+                        except Exception:
+                            liked = set()
+                        for p in posts:
+                            if str(p.get('id')) in liked:
+                                p['has_liked'] = True
+
+                    authors_map = {}
+                    if author_ids:
+                        try:
+                            authors_map = hydrate_authors_map(list(author_ids))
+                        except Exception:
+                            # fallback to DB fetch
+                            authors_from_postgres = User.objects.filter(id__in=author_ids)
+                            for author in authors_from_postgres:
+                                author_name = display_name_slug = None
+                                exclusive = False
+                                author_faculty = None
+                                author_department = None
+                                if hasattr(author, 'student'):
+                                    author_name = author.student.name
+                                    display_name_slug = getattr(author.student, 'display_name_slug', None)
+                                    author_faculty = getattr(author.student, 'faculty', None)
+                                    author_department = getattr(author.student, 'department', None)
+                                elif hasattr(author, 'organization'):
+                                    author_name = author.organization.organization_name
+                                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
+                                    exclusive = getattr(author.organization, 'exclusive', False)
+                                authors_map[str(author.id)] = {
+                                    "id": author.id,
+                                    "email": author.email,
+                                    "profile_pic_url": author.profile_pic_url,
+                                    "name": author_name,
+                                    "display_name_slug": display_name_slug,
+                                    "is_verified": author.is_verified,
+                                    "exclusive": exclusive,
+                                    "faculty": author_faculty,
+                                    "department": author_department,
+                                }
+
+                    serializer = FirestorePostOutputSerializer(posts, many=True, context={'authors_map': authors_map})
+                    has_next_page = False
+                    # If using cursors, determine has_next from next_cursor, else estimate by zcard
+                    if cursor:
+                        has_next_page = bool(next_cursor)
+                    else:
+                        try:
+                            total = r.zcard(feed_key)
+                            has_next_page = end_idx + 1 < total
+                        except Exception:
+                            has_next_page = False
+
+                    response_payload = {
+                        "results": serializer.data,
+                        "session_id": session_id,
+                        "page": page,
+                        "page_size": page_size,
+                        "has_next": has_next_page,
+                    }
+                    if cursor:
+                        response_payload['next_cursor'] = next_cursor
+
+                    return Response(response_payload, status=status.HTTP_200_OK)
+            except Exception:
+                # On any redis/firestore issue, fallback to original logic below
+                pass
             current_user_profile = None
             # Corrected logic to get the profile and its following lists
             following_user_ids = []
@@ -326,12 +694,12 @@ class FeedView(APIView):
 
             # --- 2. Build the Final Randomized, Un-Paginated Feed using dynamic ratios ---
             full_feed_list = []
-            
-            full_feed_list.extend(random.sample(followed_posts_candidates, min(ratios['followed'], len(followed_posts_candidates))))
-            full_feed_list.extend(random.sample(not_followed_no_relations_candidates, min(ratios['not_followed_no_rel'], len(not_followed_no_relations_candidates))))
-            full_feed_list.extend(random.sample(not_followed_relations_candidates, min(ratios['not_followed_rel'], len(not_followed_relations_candidates))))
-            full_feed_list.extend(random.sample(org_not_exclusive_candidates, min(ratios['org_not_exclusive'], len(org_not_exclusive_candidates))))
-            full_feed_list.extend(random.sample(org_followed_candidates, min(ratios['org_followed'], len(org_followed_candidates))))
+
+            full_feed_list.extend(rng.sample(followed_posts_candidates, min(ratios['followed'], len(followed_posts_candidates))))
+            full_feed_list.extend(rng.sample(not_followed_no_relations_candidates, min(ratios['not_followed_no_rel'], len(not_followed_no_relations_candidates))))
+            full_feed_list.extend(rng.sample(not_followed_relations_candidates, min(ratios['not_followed_rel'], len(not_followed_relations_candidates))))
+            full_feed_list.extend(rng.sample(org_not_exclusive_candidates, min(ratios['org_not_exclusive'], len(org_not_exclusive_candidates))))
+            full_feed_list.extend(rng.sample(org_followed_candidates, min(ratios['org_followed'], len(org_followed_candidates))))
 
             # print(f"Full feed list count before shuffle: {len(full_feed_list)}")
             if len(full_feed_list) < page_size:
@@ -372,7 +740,8 @@ class FeedView(APIView):
                 
                 full_feed_list = hybrid_feed_candidates
 
-            random.shuffle(full_feed_list)
+            # Deterministic, session-scored ordering with slight recency bias
+            session_sort_posts(full_feed_list, session_id, recency_weight=0.12)
 
             # print(f"Full feed list count after shuffle: {len(full_feed_list)}")
 
@@ -407,7 +776,23 @@ class FeedView(APIView):
                     giver=current_user,
                     firestore_post_id__in=final_post_ids).values_list('firestore_post_id', flat=True)
                 rewarded_post_ids_set = set(rewarded_post_ids_qs)
+                # Also compute total reward points per post for the final page
+                try:
+                    reward_totals_qs = RewardPointTransaction.objects.filter(
+                        firestore_post_id__in=final_post_ids
+                    ).values('firestore_post_id').annotate(total=Sum('points'))
+                    reward_map = {r['firestore_post_id']: r['total'] for r in reward_totals_qs}
+                except Exception:
+                    reward_map = {}
             
+
+            # Batch check which posts the current user has liked (use Redis cached sets)
+            liked_set = set()
+            if request.user.is_authenticated and final_post_ids:
+                try:
+                    liked_set = batch_has_liked(str(current_user.id), final_post_ids)
+                except Exception:
+                    liked_set = set()
 
             for post_data in unique_paginated_posts:
                 post_id = post_data.get('id')
@@ -417,8 +802,9 @@ class FeedView(APIView):
                 post_doc = db.collection('posts').document(post_id).get()
                 post_data['view_count'] = post_doc.to_dict().get('view_count', 0) if post_doc.exists else 0
                 post_data['like_count'] = post_doc.to_dict().get('like_count', 0) if post_doc.exists else 0
-                post_data['has_liked'] = db.collection('posts').document(post_id).collection('likes').document(str(current_user.id)).get().exists
+                post_data['has_liked'] = str(post_id) in liked_set
                 post_data['has_rewarded'] = post_id in rewarded_post_ids_set
+                post_data['reward_point_count'] = reward_map.get(post_id, 0)
                 final_posts_for_response.append(post_data)
 
             # print(f"Final posts for response count: {len(final_posts_for_response)}")
@@ -498,7 +884,8 @@ class QuestionPostView(APIView):
             session_id = request.query_params.get('session_id')
             if not session_id:
                 session_id = str(uuid.uuid4())
-            random.seed(session_id)
+            # For per-session deterministic ordering we use a local RNG only when needed
+            rng = get_session_rng(session_id)
 
             # Fetch posts with 'question' tag
             question_posts_query = db.collection('posts').where('tags', '==', 'question').order_by('timestamp', direction=firestore.Query.DESCENDING)
@@ -556,18 +943,38 @@ class QuestionPostView(APIView):
                         "faculty": author_faculty if hasattr(author, 'student') else None,
                         "department": author_department if hasattr(author, 'student') else None,
                     }
-            # Has liked logic
+            # Has liked logic (batched via Redis)
             if request.user.is_authenticated and posts_list:
                 user_id = str(request.user.id)
+                post_ids_batch = [post['id'] for post in posts_list if 'id' in post]
+                liked_set = batch_has_liked(user_id, post_ids_batch)
                 for post in posts_list:
-                    like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
-                    post['has_liked'] = like_doc_ref.get().exists
-                    # Reward logic
-                    reward_doc_ref = RewardPointTransaction.objects.filter(
+                    pid = post.get('id')
+                    post['has_liked'] = str(pid) in liked_set if pid else False
+                # Reward point totals for this page
+                firestore_post_ids = [p['id'] for p in posts_list if 'id' in p]
+                try:
+                    reward_totals_qs = RewardPointTransaction.objects.filter(
+                        firestore_post_id__in=firestore_post_ids
+                    ).values('firestore_post_id').annotate(total=Sum('points'))
+                    reward_map = {r['firestore_post_id']: r['total'] for r in reward_totals_qs}
+                except Exception:
+                    reward_map = {}
+
+                # Batched rewarded presence for this user
+                try:
+                    rewarded_ids = RewardPointTransaction.objects.filter(
                         giver=request.user,
-                        firestore_post_id=post['id']
-                    )
-                    post['has_rewarded'] = reward_doc_ref.exists()
+                        firestore_post_id__in=firestore_post_ids
+                    ).values_list('firestore_post_id', flat=True)
+                    rewarded_set = {str(r) for r in rewarded_ids}
+                except Exception:
+                    rewarded_set = set()
+
+                for post in posts_list:
+                    pid = post.get('id')
+                    post['reward_point_count'] = reward_map.get(pid, 0)
+                    post['has_rewarded'] = str(pid) in rewarded_set if pid else False
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
             has_next_page = end_index < len(question_posts_query.get())
             return Response({
@@ -596,7 +1003,7 @@ class RelatablePostView(APIView):
             session_id = request.query_params.get('session_id')
             if not session_id:
                 session_id = str(uuid.uuid4())
-            random.seed(session_id)
+            rng = get_session_rng(session_id)
 
             # Fetch posts with 'question' tag
             question_posts_query = db.collection('posts').where('tags', '==', 'relatable').order_by('timestamp', direction=firestore.Query.DESCENDING)
@@ -654,18 +1061,33 @@ class RelatablePostView(APIView):
                         "faculty": author_faculty if hasattr(author, 'student') else None,
                         "department": author_department if hasattr(author, 'student') else None,
                     }
-            # Has liked logic
+            # Has liked logic (batched via Redis) and reward totals
             if request.user.is_authenticated and posts_list:
                 user_id = str(request.user.id)
+                post_ids_batch = [post['id'] for post in posts_list if 'id' in post]
+                liked_set = batch_has_liked(user_id, post_ids_batch)
+
+                # Batched rewarded presence (did this user reward these posts?)
+                rewarded_post_ids = RewardPointTransaction.objects.filter(
+                    giver=request.user,
+                    firestore_post_id__in=post_ids_batch
+                ).values_list('firestore_post_id', flat=True)
+                rewarded_set = set(rewarded_post_ids)
+
+                # Reward point totals (sum per post)
+                try:
+                    reward_totals_qs = RewardPointTransaction.objects.filter(
+                        firestore_post_id__in=post_ids_batch
+                    ).values('firestore_post_id').annotate(total=Sum('points'))
+                    reward_map = {r['firestore_post_id']: r['total'] for r in reward_totals_qs}
+                except Exception:
+                    reward_map = {}
+
                 for post in posts_list:
-                    like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
-                    post['has_liked'] = like_doc_ref.get().exists
-                    # Reward logic
-                    reward_doc_ref = RewardPointTransaction.objects.filter(
-                        giver=request.user,
-                        firestore_post_id=post['id']
-                    )
-                    post['has_rewarded'] = reward_doc_ref.exists()
+                    pid = post.get('id')
+                    post['has_liked'] = str(pid) in liked_set if pid else False
+                    post['has_rewarded'] = str(pid) in rewarded_set if pid else False
+                    post['reward_point_count'] = reward_map.get(pid, 0)
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
             has_next_page = end_index < len(question_posts_query.get())
             return Response({
@@ -694,7 +1116,7 @@ class UpdatesPostView(APIView):
             session_id = request.query_params.get('session_id')
             if not session_id:
                 session_id = str(uuid.uuid4())
-            random.seed(session_id)
+            rng = get_session_rng(session_id)
 
             # Fetch posts with 'question' tag
             question_posts_query = db.collection('posts').where('tags', '==', 'update').order_by('timestamp', direction=firestore.Query.DESCENDING)
@@ -752,18 +1174,35 @@ class UpdatesPostView(APIView):
                         "faculty": author_faculty if hasattr(author, 'student') else None,
                         "department": author_department if hasattr(author, 'student') else None,
                     }
-            # Has liked logic
+            # Batch has_liked and has_rewarded
             if request.user.is_authenticated and posts_list:
                 user_id = str(request.user.id)
-                for post in posts_list:
-                    like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
-                    post['has_liked'] = like_doc_ref.get().exists
-                    # Reward logic
-                    reward_doc_ref = RewardPointTransaction.objects.filter(
+                post_ids = [p['id'] for p in posts_list]
+                try:
+                    liked = batch_has_liked(user_id, post_ids)
+                except Exception:
+                    liked = set()
+                try:
+                    rewarded_ids = RewardPointTransaction.objects.filter(
                         giver=request.user,
-                        firestore_post_id=post['id']
-                    )
-                    post['has_rewarded'] = reward_doc_ref.exists()
+                        firestore_post_id__in=post_ids
+                    ).values_list('firestore_post_id', flat=True)
+                    rewarded = {str(r) for r in rewarded_ids}
+                except Exception:
+                    rewarded = set()
+                # Reward point totals for this page
+                try:
+                    reward_totals_qs = RewardPointTransaction.objects.filter(
+                        firestore_post_id__in=post_ids
+                    ).values('firestore_post_id').annotate(total=Sum('points'))
+                    reward_map = {r['firestore_post_id']: r['total'] for r in reward_totals_qs}
+                except Exception:
+                    reward_map = {}
+                for post in posts_list:
+                    pid = str(post.get('id'))
+                    post['has_liked'] = pid in liked
+                    post['has_rewarded'] = pid in rewarded
+                    post['reward_point_count'] = reward_map.get(post.get('id'), 0)
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
             has_next_page = end_index < len(question_posts_query.get())
             return Response({
@@ -792,7 +1231,7 @@ class MilestonePostView(APIView):
             session_id = request.query_params.get('session_id')
             if not session_id:
                 session_id = str(uuid.uuid4())
-            random.seed(session_id)
+            rng = get_session_rng(session_id)
 
             # Fetch posts with 'question' tag
             question_posts_query = db.collection('posts').where('tags', '==', 'milestone').order_by('timestamp', direction=firestore.Query.DESCENDING)
@@ -850,18 +1289,35 @@ class MilestonePostView(APIView):
                         "faculty": author_faculty if hasattr(author, 'student') else None,
                         "department": author_department if hasattr(author, 'student') else None,
                     }
-            # Has liked logic
+            # Batch has_liked and has_rewarded
             if request.user.is_authenticated and posts_list:
                 user_id = str(request.user.id)
-                for post in posts_list:
-                    like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
-                    post['has_liked'] = like_doc_ref.get().exists
-                    # Reward logic
-                    reward_doc_ref = RewardPointTransaction.objects.filter(
+                post_ids = [p['id'] for p in posts_list]
+                try:
+                    liked = batch_has_liked(user_id, post_ids)
+                except Exception:
+                    liked = set()
+                try:
+                    rewarded_ids = RewardPointTransaction.objects.filter(
                         giver=request.user,
-                        firestore_post_id=post['id']
-                    )
-                    post['has_rewarded'] = reward_doc_ref.exists()
+                        firestore_post_id__in=post_ids
+                    ).values_list('firestore_post_id', flat=True)
+                    rewarded = {str(r) for r in rewarded_ids}
+                except Exception:
+                    rewarded = set()
+                # Reward point totals for this page
+                try:
+                    reward_totals_qs = RewardPointTransaction.objects.filter(
+                        firestore_post_id__in=post_ids
+                    ).values('firestore_post_id').annotate(total=Sum('points'))
+                    reward_map = {r['firestore_post_id']: r['total'] for r in reward_totals_qs}
+                except Exception:
+                    reward_map = {}
+                for post in posts_list:
+                    pid = str(post.get('id'))
+                    post['has_liked'] = pid in liked
+                    post['has_rewarded'] = pid in rewarded
+                    post['reward_point_count'] = reward_map.get(post.get('id'), 0)
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
             has_next_page = end_index < len(question_posts_query.get())
             return Response({
@@ -976,12 +1432,14 @@ class PostListCreateFirestoreView(APIView):
                         "department": author_department if hasattr(author, 'student') else None,
                     }
 
-            # --- Has liked logic ---
+            # --- Has liked logic (batched via Redis) ---
             if request.user.is_authenticated and posts_list:
                 user_id = str(request.user.id)
+                post_ids_batch = [post['id'] for post in posts_list if 'id' in post]
+                liked_set = batch_has_liked(user_id, post_ids_batch)
                 for post in posts_list:
-                    like_doc_ref = db.collection('posts').document(post['id']).collection('likes').document(user_id)
-                    post['has_liked'] = like_doc_ref.get().exists
+                    pid = post.get('id')
+                    post['has_liked'] = str(pid) in liked_set if pid else False
 
                 rewarded_post_ids = RewardPointTransaction.objects.filter(
                     giver=request.user,
@@ -992,6 +1450,17 @@ class PostListCreateFirestoreView(APIView):
 
                 for post in posts_list:
                     post['has_rewarded'] = post['id'] in rewarded_set
+                # --- Reward point totals (sum of points per post) ---
+                try:
+                    reward_totals_qs = RewardPointTransaction.objects.filter(
+                        firestore_post_id__in=firestore_post_ids
+                    ).values('firestore_post_id').annotate(total=Sum('points'))
+                    reward_map = {r['firestore_post_id']: r['total'] for r in reward_totals_qs}
+                except Exception:
+                    reward_map = {}
+
+                for post in posts_list:
+                    post['reward_point_count'] = reward_map.get(post.get('id'), 0)
 
             serializer = FirestorePostOutputSerializer(posts_list, many=True, context={'authors_map': authors_map})
             return Response({
@@ -1051,6 +1520,13 @@ class PostListCreateFirestoreView(APIView):
                     post_id=created_post['id'],
                     author_profile_pic_url=author_profile_pic_url,
                 )
+
+                # --- Push-on-write: schedule fan-out to followers via Celery ---
+                try:
+                    from .tasks import fanout_post_to_followers
+                    fanout_post_to_followers.delay(request.user.id, created_post['id'])
+                except Exception:
+                    logger.exception("Failed to enqueue fanout_post_to_followers task")
 
                 return Response(created_post, status=status.HTTP_201_CREATED)
             except Exception as e:
@@ -1156,6 +1632,15 @@ class PostDetailFirestoreView(APIView):
                     firestore_post_id=post_data['id']
                 ).exists()
                 post_data['has_rewarded'] = rewarded
+
+            # Total reward points for the post
+            try:
+                total_points = RewardPointTransaction.objects.filter(
+                    firestore_post_id=post_data['id']
+                ).aggregate(total=Sum('points'))['total'] or 0
+            except Exception:
+                total_points = 0
+            post_data['reward_point_count'] = total_points
 
             return Response(post_data, status=status.HTTP_200_OK)
         return Response({"error": "Post not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -1677,6 +2162,18 @@ class LikeToggleFirestoreView(APIView):
                     except User.DoesNotExist:
                         pass
 
+            # --- Update Redis user likes cache asynchronously (best-effort) ---
+            try:
+                r = get_redis_client()
+                likes_key = f"user:likes:{user_id}"
+                if liked_now:
+                    r.sadd(likes_key, post_id)
+                    r.expire(likes_key, REDIS_LIKES_TTL)
+                else:
+                    r.srem(likes_key, post_id)
+            except Exception:
+                logger.exception("Failed to update redis user likes cache")
+
             if liked_now:
                 return Response({"message": "Post liked successfully."}, status=status.HTTP_201_CREATED)
             else:
@@ -1879,8 +2376,8 @@ class ExclusiveOrgsRecentPostsView(APIView):
             if not session_id:
                 session_id = str(uuid.uuid4())
             
-            # Seed the random generator for consistent shuffling
-            random.seed(session_id)
+            # Use a local RNG for deterministic session behavior
+            rng = get_session_rng(session_id)
 
             # 1. Get all exclusive org user IDs
             exclusive_orgs = Organization.objects.filter(exclusive=True)
@@ -1908,18 +2405,11 @@ class ExclusiveOrgsRecentPostsView(APIView):
                         post_data['id'] = doc.id
                         post_data['has_liked'] = False
                         post_data['has_rewarded'] = False
-                        if current_user_id:
-                            like_doc_ref = db.collection('posts').document(doc.id).collection('likes').document(current_user_id)
-                            post_data['has_liked'] = like_doc_ref.get().exists
-                            rewarded = RewardPointTransaction.objects.filter(
-                                giver=request.user,
-                                firestore_post_id=doc.id
-                            ).exists()
-                            post_data['has_rewarded'] = rewarded
                         all_posts.append(post_data)
 
             # 3. Shuffle the ENTIRE list of posts
-            random.shuffle(all_posts)
+            # Deterministic session ordering for exclusive org posts
+            session_sort_posts(all_posts, session_id, recency_weight=0.08)
             
             # --- Pagination ---
             start_index = (page - 1) * page_size
@@ -1947,6 +2437,37 @@ class ExclusiveOrgsRecentPostsView(APIView):
                     continue
 
             serializer = FirestorePostOutputSerializer(paginated_posts, many=True, context={'authors_map': authors_map})
+
+            # Batch has_liked for current user
+            if current_user_id and paginated_posts:
+                try:
+                    post_ids = [p['id'] for p in paginated_posts if 'id' in p]
+                    liked_set = batch_has_liked(current_user_id, post_ids)
+                    # Batched rewarded presence for this user
+                    try:
+                        rewarded_ids = RewardPointTransaction.objects.filter(
+                            giver=request.user,
+                            firestore_post_id__in=post_ids
+                        ).values_list('firestore_post_id', flat=True)
+                        rewarded_set = {str(r) for r in rewarded_ids}
+                    except Exception:
+                        rewarded_set = set()
+                    # Reward totals per post
+                    try:
+                        reward_totals_qs = RewardPointTransaction.objects.filter(
+                            firestore_post_id__in=post_ids
+                        ).values('firestore_post_id').annotate(total=Sum('points'))
+                        reward_map = {r['firestore_post_id']: r['total'] for r in reward_totals_qs}
+                    except Exception:
+                        reward_map = {}
+
+                    for p in paginated_posts:
+                        pid = str(p.get('id'))
+                        p['has_liked'] = pid in liked_set
+                        p['has_rewarded'] = pid in rewarded_set
+                        p['reward_point_count'] = reward_map.get(p.get('id'), 0)
+                except Exception:
+                    pass
 
             return Response({
                 "results": serializer.data,
@@ -1992,22 +2513,17 @@ class UserPostsFirestoreView(APIView):
                 except:
                     pass
 
+            # Collect authored posts (no per-post reads for likes yet)
             authored_posts = []
+            authored_post_ids = []
             for doc in posts_query.limit(50).stream():
                 post_data = doc.to_dict()
                 post_data['id'] = doc.id
                 post_data['has_liked'] = False
                 post_data['is_shared'] = False
                 post_data['has_rewarded'] = False
-                if current_user_id:
-                    like_doc_ref = db.collection('posts').document(doc.id).collection('likes').document(current_user_id)
-                    post_data['has_liked'] = like_doc_ref.get().exists
-                    rewarded = RewardPointTransaction.objects.filter(
-                        giver=request.user,
-                        firestore_post_id=doc.id
-                    ).exists()
-                    post_data['has_rewarded'] = rewarded
                 authored_posts.append(post_data)
+                authored_post_ids.append(doc.id)
 
             # --- Shared Posts ---
             shares_query = db.collection('shares') \
@@ -2015,30 +2531,52 @@ class UserPostsFirestoreView(APIView):
                 .order_by('shared_at', direction=firestore.Query.DESCENDING)
 
             shared_posts = []
+            original_post_ids = []
             for share_doc in shares_query.limit(50).stream():
                 share_data = share_doc.to_dict()
                 original_post_id = share_data.get('original_post_id')
                 if not original_post_id:
                     continue
 
-                # Add share to shares_map
+                # Add share metadata to shares_map
                 share_data['id'] = share_doc.id
                 if original_post_id not in shares_map:
                     shares_map[original_post_id] = []
                 shares_map[original_post_id].append(share_data)
 
-                # Add shared post to output
-                original_post_doc = db.collection('posts').document(original_post_id).get()
-                if original_post_doc.exists:
-                    post_data = original_post_doc.to_dict()
-                    post_data['id'] = original_post_doc.id
+                # Collect original post ids for batch fetch
+                original_post_ids.append(original_post_id)
+
+            # Batch fetch original posts for shared posts
+            if original_post_ids:
+                # dedupe while preserving order
+                seen = set()
+                deduped_ids = []
+                for pid in original_post_ids:
+                    if pid not in seen:
+                        seen.add(pid)
+                        deduped_ids.append(pid)
+
+                doc_refs = [db.collection('posts').document(pid) for pid in deduped_ids]
+                try:
+                    docs = list(db.get_all(doc_refs))
+                except Exception:
+                    docs = []
+
+                for doc in docs:
+                    if not doc.exists:
+                        continue
+                    post_data = doc.to_dict()
+                    post_data['id'] = doc.id
                     post_data['is_shared'] = True
-                    post_data['shared_by_id'] = share_data.get('shared_by_id')
-                    post_data['shared_at'] = share_data.get('shared_at')
+                    # attach the most recent share metadata for this post (if any)
+                    shares_for_post = shares_map.get(doc.id, [])
+                    if shares_for_post:
+                        # shares were collected in descending shared_at order by the query
+                        latest_share = shares_for_post[0]
+                        post_data['shared_by_id'] = latest_share.get('shared_by_id')
+                        post_data['shared_at'] = latest_share.get('shared_at')
                     post_data['has_liked'] = False
-                    if current_user_id:
-                        like_doc_ref = db.collection('posts').document(post_data['id']).collection('likes').document(current_user_id)
-                        post_data['has_liked'] = like_doc_ref.get().exists
                     shared_posts.append(post_data)
 
             # --- Combine, sort, and paginate ---
@@ -2048,30 +2586,53 @@ class UserPostsFirestoreView(APIView):
             paginated_posts = combined_posts[:page_size]
             next_cursor = paginated_posts[-1]['id'] if len(paginated_posts) == page_size else None
 
-            # --- Hydrate author info ---
-            authors_map = {}
-            try:
-                author = User.objects.only('id', 'email', 'profile_pic_url', 'is_verified').get(id=user_id)
-                author_name = None
-                if hasattr(author, 'student') and author.student.name:
-                    author_name = author.student.name
-                    display_name_slug = getattr(author.student, 'display_name_slug', None)
-                elif hasattr(author, 'organization') and author.organization.organization_name:
-                    author_name = author.organization.organization_name
-                    exclusive = getattr(author.organization, 'exclusive', False)
-                    display_name_slug = getattr(author.organization, 'display_name_slug', None)
+            # --- Batch hydrate has_liked, has_rewarded, and authors_map ---
+            paginated_post_ids = [p['id'] for p in paginated_posts]
 
-                authors_map[str(author.id)] = {
-                    "id": author.id,
-                    "email": author.email,
-                    "profile_pic_url": author.profile_pic_url,
-                    "name": author_name,
-                    "is_verified": author.is_verified,
-                    "exclusive": exclusive if hasattr(author, 'organization') else False,
-                    "display_name_slug": display_name_slug,
-                }
-            except User.DoesNotExist:
-                pass
+            # Batch has_liked via Redis-backed set
+            liked_set = set()
+            if current_user_id and paginated_post_ids:
+                try:
+                    liked_set = batch_has_liked(current_user_id, paginated_post_ids)
+                except Exception:
+                    liked_set = set()
+
+            # Batch rewarded flags from Django model
+            rewarded_set = set()
+            if request.user.is_authenticated and paginated_post_ids:
+                try:
+                    rewarded_ids = RewardPointTransaction.objects.filter(
+                        giver=request.user,
+                        firestore_post_id__in=paginated_post_ids
+                    ).values_list('firestore_post_id', flat=True)
+                    rewarded_set = {str(rid) for rid in rewarded_ids}
+                except Exception:
+                    rewarded_set = set()
+
+                # Reward totals per post for this page
+                try:
+                    reward_totals_qs = RewardPointTransaction.objects.filter(
+                        firestore_post_id__in=paginated_post_ids
+                    ).values('firestore_post_id').annotate(total=Sum('points'))
+                    reward_map = {r['firestore_post_id']: r['total'] for r in reward_totals_qs}
+                except Exception:
+                    reward_map = {}
+
+            # Apply flags
+            for post in paginated_posts:
+                pid = str(post.get('id'))
+                post['has_liked'] = pid in liked_set
+                post['has_rewarded'] = pid in rewarded_set
+                post['reward_point_count'] = reward_map.get(post.get('id'), 0)
+
+            # Hydrate authors via Redis cache + DB fallback
+            author_ids = list({str(p.get('author_id')) for p in paginated_posts if p.get('author_id')})
+            authors_map = {}
+            if author_ids:
+                try:
+                    authors_map = hydrate_authors_map(author_ids)
+                except Exception:
+                    authors_map = {}
 
             serializer = FirestorePostOutputSerializer(
                 paginated_posts, many=True,

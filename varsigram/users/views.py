@@ -1,6 +1,6 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from rest_framework.pagination import PageNumberPagination
 from rest_framework import status, generics
 # from django.core.exceptions import ObjectDoesNotExist
@@ -14,7 +14,8 @@ from .serializer import (
     RegisterSerializer, LoginSerializer, StudentUpdateSerializer, OrganizationUpdateSerializer,
     OrganizationProfileSerializer, StudentProfileSerializer,
     UserDeactivateSerializer, UserReactivateSerializer,
-    OTPVerificationSerializer, SendOTPSerializer, SocialLinksSerializer
+    OTPVerificationSerializer, SendOTPSerializer, SocialLinksSerializer,
+    ConfirmDeletionSerializer
 )
 # from django.core.mail import send_mail
 from .utils import clean_data
@@ -22,6 +23,11 @@ from django.contrib.auth import get_user_model
 from django.utils.http import urlsafe_base64_decode
 from postMang.apps import get_firebase_storage_client
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
 # from django.core.exceptions import PermissionDenied, AuthenticationFailed
 # from django.conf import settings
 # from auth.oauth import (
@@ -102,6 +108,58 @@ class UserLogout(APIView):
         logout(request)
         msg = {'message': 'Logged Out Successfully'}
         return Response(data=msg, status=status.HTTP_200_OK)
+
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    """Extends default serializer to accept `remember_me` and issue longer refresh tokens when requested."""
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        request = self.context.get('request')
+        remember_me = False
+        if request:
+            remember_me = bool(request.data.get('remember_me', False))
+
+        refresh = RefreshToken.for_user(self.user)
+        # If remember_me requested, extend refresh lifetime (e.g., 30 days)
+        if remember_me:
+            try:
+                from datetime import datetime, timezone, timedelta
+                exp = datetime.now(timezone.utc) + timedelta(days=30)
+                # set_exp expects a datetime in some simplejwt versions
+                if hasattr(refresh, 'set_exp'):
+                    refresh.set_exp(exp)
+                else:
+                    refresh['exp'] = int(exp.timestamp())
+            except Exception:
+                pass
+
+        data['refresh'] = str(refresh)
+        data['access'] = str(refresh.access_token)
+        return data
+
+
+class CustomTokenObtainPairView(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer
+
+
+class LogoutAndBlacklistRefreshToken(APIView):
+    """Blacklists a refresh token provided in the request body. POST {"refresh": "<token>"}
+
+    Requires `rest_framework_simplejwt.token_blacklist` in INSTALLED_APPS and migrations applied.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        refresh_token = request.data.get('refresh')
+        if not refresh_token:
+            return Response({'detail': 'Missing refresh token.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+        except Exception as e:
+            return Response({'detail': 'Invalid token.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({'detail': 'Refresh token blacklisted.'}, status=status.HTTP_200_OK)
 
 # User = get_user_model()
 
@@ -376,6 +434,49 @@ class UserReactivateView(generics.GenericAPIView):
             status=status.HTTP_200_OK
         )
 
+
+class AdminHardDeleteUserView(generics.GenericAPIView):
+    """ Admin-only endpoint to permanently delete a user by PK """
+    permission_classes = [IsAdminUser]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = ConfirmDeletionSerializer
+
+    def post(self, request, pk):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = User.objects.all_with_deleted().filter(pk=pk).first()
+        if not user:
+            raise NotFound("User not found")
+
+        user.hard_delete()
+        return Response({"message": "User permanently deleted."}, status=status.HTTP_204_NO_CONTENT)
+
+
+class SelfHardDeleteView(generics.GenericAPIView):
+    """ Endpoint for a user to permanently delete their own account. Requires confirm and password if applicable. """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = ConfirmDeletionSerializer
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        password = serializer.validated_data.get('password', None)
+        user = request.user
+
+        # If the user has a usable password, require it for extra safety
+        if user.has_usable_password():
+            if not password:
+                return Response({"password": ["Password is required for account deletion."]}, status=status.HTTP_400_BAD_REQUEST)
+            if not user.check_password(password):
+                return Response({"password": ["Incorrect password."]}, status=status.HTTP_400_BAD_REQUEST)
+
+        # perform deletion
+        user.hard_delete()
+        return Response({"message": "Your account has been permanently removed."}, status=status.HTTP_204_NO_CONTENT)
+
 class SendOTPView(generics.GenericAPIView):
     """ Send OTP to user email """
     permission_classes = [IsAuthenticated]
@@ -522,6 +623,91 @@ class GetSignedUploadUrlView(APIView):
                 {"error": f"Could not generate signed URL: {e}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+
+class UserDetailView(APIView):
+    """
+    Retrieve a user's profile by user_id (pk).
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        user = request.user if request.user.is_authenticated else None
+        is_following = False
+
+        try:
+            # Get the user by pk
+            target_user = User.objects.get(pk=pk)
+        except User.DoesNotExist:
+            return Response({"detail": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Try to find a student with this user
+        student = Student.objects.filter(user=target_user).first()
+        if student:
+            student_ct = ContentType.objects.get(model='student')
+            # Followers: anyone following this student
+            followers_count = Follow.objects.filter(
+                followee_content_type=student_ct,
+                followee_object_id=student.id
+            ).count()
+            # Following: how many profiles this student is following
+            following_count = Follow.objects.filter(
+                follower_content_type=student_ct,
+                follower_object_id=student.id
+            ).count()
+
+            # Check if current user is following this student
+            if user and hasattr(user, 'student'):
+                follow_exists = Follow.objects.filter(
+                    follower_content_type=student_ct,
+                    follower_object_id=user.student.id,
+                    followee_content_type=student_ct,
+                    followee_object_id=student.id
+                ).exists()
+                is_following = follow_exists
+            serializer = StudentProfileSerializer(student)
+            return Response({
+                "profile_type": "student",
+                "profile": serializer.data,
+                "is_following": is_following,
+                "followers_count": followers_count,
+                "following_count": following_count,
+            })
+
+        # Try to find an organization with this user
+        organization = Organization.objects.filter(user=target_user).first()
+        if organization:
+            student_ct = ContentType.objects.get(model='student')
+            org_ct = ContentType.objects.get(model='organization')
+            # Followers: anyone following this organization
+            followers_count = Follow.objects.filter(
+                followee_content_type=org_ct,
+                followee_object_id=organization.id
+            ).count()
+            # Following: how many profiles this organization is following
+            following_count = Follow.objects.filter(
+                follower_content_type=org_ct,
+                follower_object_id=organization.id
+            ).count()
+
+            if user and hasattr(user, 'student'):
+                follow_exists = Follow.objects.filter(
+                    follower_content_type=student_ct,
+                    follower_object_id=user.student.id,
+                    followee_content_type=org_ct,
+                    followee_object_id=organization.id
+                ).exists()
+                is_following = follow_exists
+            serializer = OrganizationProfileSerializer(organization)
+            return Response({
+                "profile_type": "organization",
+                "profile": serializer.data,
+                "is_following": is_following,
+                "followers_count": followers_count,
+                "following_count": following_count,
+            })
+
+        return Response({"detail": "Profile not found for this user."}, status=status.HTTP_404_NOT_FOUND)
 
 
 class PublicProfileView(APIView):

@@ -25,5 +25,5 @@ class WallSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Wall
-        fields = ['id', 'name', 'description', 'creator_email', 'created_at', 'member_count']
-        read_only_fields = ['id', 'created_at']
+        fields = ['id', 'code', 'name', 'description', 'creator_email', 'created_at', 'member_count']
+        read_only_fields = ['id', 'created_at', 'code']

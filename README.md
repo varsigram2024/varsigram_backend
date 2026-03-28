@@ -58,26 +58,6 @@ Most endpoints require authentication. Authentication is handled using token-bas
     *   Response (201 Created): Returns a JWT token and a success message.
     *   Response (400 Bad Request): If registration fails (e.g., invalid input, email already exists, both student and organization provided, or neither).
 
-*   **`POST /login/`**  [name='login']
-
-    *   Description: Logs in an existing user.
-    *   Request: `POST`
-    *   Request Body (JSON):
-        ```json
-        {
-            "email": "user@example.com",
-            "password": "password123"
-        }
-        ```
-    *   Response (200 OK): Returns a JWT token and a success message.
-    *   Response (401 Unauthorized): If login fails (e.g., incorrect credentials).
-
-*   **`POST /logout/`**  [name='logout']
-
-    *   Description: Logs out the current user (invalidates the token).
-    *   Request: `POST`
-    *   Authentication: Required
-    *   Response (200 OK): On successful logout.
 
 *   **`POST /password-reset/`**  [name='password-reset']
 
@@ -291,6 +271,21 @@ Most endpoints require authentication. Authentication is handled using token-bas
     *   Response (200 OK): Returns the public profile data and profile type.
 
 ---
+
+
+### Token / Session Notes (short)
+
+- **`POST /api/v1/token/`** — Obtain tokens. The login endpoint accepts an optional `remember_me` boolean in the request body to request a longer-lived refresh session. Example request body:
+
+    ```json
+    { "email": "you@example.com", "password": "secret", "remember_me": true }
+    ```
+
+- **`POST /api/v1/token/refresh/`** — Exchange a refresh token for a new access token (may rotate the refresh token depending on server configuration).
+
+- **`POST /api/v1/token/logout/`** — Blacklist a refresh token to immediately sign out that session. Provide the `refresh` token in the POST body.
+
+If you need precise request/response examples for any of these endpoints, tell me which one and I'll add a small example curl snippet.
 
 **Note:**  
 - All endpoints that modify or access sensitive data require authentication.
@@ -746,8 +741,14 @@ A lightweight feature for creating **Walls** and letting people **join** them wi
 - `GET /api/v1/walls/<uuid:wall_id>/members/` — List wall members (paginated)
 - `POST /api/v1/walls/<uuid:wall_id>/join/` — Join a wall (multipart form-data, optional image upload)
 
+# New: join / view by 8-letter code
+- `GET /api/v1/walls/code/<str:code>/` — Retrieve wall details by 8-letter code (read-only `code` shown in responses)
+- `GET /api/v1/walls/code/<str:code>/members/` — List wall members (paginated) looked up by code
+- `POST /api/v1/walls/code/<str:code>/join/` — Join a wall by its 8-letter code (multipart form-data)
+
 ### Models & important fields 🔧
 - **Wall**: `id` (UUID), `name`, `description`, `creator_email`, `created_at`
+    - **New**: `code` — 8 uppercase letters, unique, read-only. Auto-generated on wall creation and can be used as a short join/view identifier.
 - **WallMember**: `id`, `wall` (FK), `full_name`, `contact_info`, `interests`, `photo_url` (nullable), `joined_at`
 
 ### Join Wall (Usage notes) 💡
@@ -757,6 +758,8 @@ A lightweight feature for creating **Walls** and letting people **join** them wi
   `https://firebasestorage.googleapis.com/v0/b/<bucket-name>/o/<path>?alt=media`
 - If Firebase upload fails, the member is still created but `photo_url` may be `null` (upload errors are logged).
 - The operation is **open (AllowAny)** — authentication is not required.
+ - You can join a wall either by its UUID (`/api/v1/walls/<uuid:wall_id>/join/`) or by its 8-letter `code` (`/api/v1/walls/code/<CODE>/join/`). The code lookup is case-insensitive.
+ - Wall creation responses include a read-only `code` field — share this short code with people to let them join or view the wall without exposing the UUID.
 
 ### Constraints & behaviors ⚠️
 - A wall is limited to **300 members**; attempts to join after the limit will return `400 Bad Request` with a message about the limit.
@@ -780,6 +783,16 @@ Response (201 Created):
   "photo_url": "https://... (or null)",
   "joined_at": "2025-01-01T12:00:00Z"
 }
+```
+
+Example: Join by code (multipart POST to):
+```
+/api/v1/walls/code/BEXIMWHK/join/
+```
+
+Example: Retrieve wall by code (GET):
+```
+/api/v1/walls/code/BEXIMWHK/
 ```
 
 ### Example: List Members (paginated)
