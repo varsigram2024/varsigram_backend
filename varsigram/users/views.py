@@ -122,16 +122,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         refresh = RefreshToken.for_user(self.user)
         # If remember_me requested, extend refresh lifetime (e.g., 30 days)
         if remember_me:
-            try:
-                from datetime import datetime, timezone, timedelta
-                exp = datetime.now(timezone.utc) + timedelta(days=30)
-                # set_exp expects a datetime in some simplejwt versions
-                if hasattr(refresh, 'set_exp'):
-                    refresh.set_exp(exp)
-                else:
-                    refresh['exp'] = int(exp.timestamp())
-            except Exception:
-                pass
+            from datetime import datetime, timezone, timedelta
+            exp = datetime.now(timezone.utc) + timedelta(days=30)
+            refresh['exp'] = int(exp.timestamp())
 
         data['refresh'] = str(refresh)
         data['access'] = str(refresh.access_token)
