@@ -174,13 +174,15 @@ def get_session_rng(session_id):
         return random.Random()
 
 
-def session_rank_score(seed, post_id, timestamp=None, recency_weight=0.2):
+def session_rank_score(seed, post_id, timestamp=None, engagement_score=0.0, recency_weight=0.7, engagement_weight=0.15):
     """Deterministic per-post pseudo-random score combined with optional recency bias.
 
     - `seed`: session identifier
     - `post_id`: unique post id
     - `timestamp`: datetime (UTC) or None
+    - `engagement_score`: numeric score based on views and comments
     - `recency_weight`: 0..1 weight for recency (higher favors newer posts)
+    - `engagement_weight`: 0..1 weight for engagement
     Returns a float score where larger is better.
     """
     try:
@@ -205,10 +207,15 @@ def session_rank_score(seed, post_id, timestamp=None, recency_weight=0.2):
         except Exception:
             recency = 0.0
 
-    return recency_weight * recency + (1.0 - recency_weight) * rand
+    # Normalize engagement: smooth curve where 0 -> 0, 1000 -> ~0.66, etc.
+    norm_engagement = 1.0 - (1.0 / (1.0 + (engagement_score / 500.0)))
+
+    random_weight = max(0.0, 1.0 - recency_weight - engagement_weight)
+
+    return (recency_weight * recency) + (engagement_weight * norm_engagement) + (random_weight * rand)
 
 
-def session_sort_posts(posts, session_id, recency_weight=0.2, timestamp_key='timestamp'):
+def session_sort_posts(posts, session_id, recency_weight=0.7, engagement_weight=0.15, timestamp_key='timestamp'):
     """Sort posts in-place by deterministic session score (descending).
 
     Each post should be a dict with an `id` and optionally `timestamp`.
@@ -220,7 +227,18 @@ def session_sort_posts(posts, session_id, recency_weight=0.2, timestamp_key='tim
     for p in posts:
         pid = str(p.get('id'))
         ts = p.get(timestamp_key)
-        scores[pid] = session_rank_score(seed, pid, ts, recency_weight=recency_weight)
+        
+        # Calculate raw engagement score (1 view = 1, 1 comment = 10)
+        views = p.get('view_count', 0)
+        comments = p.get('comment_count', 0)
+        raw_engagement = float(views) + (float(comments) * 10.0)
+
+        scores[pid] = session_rank_score(
+            seed, pid, ts, 
+            engagement_score=raw_engagement, 
+            recency_weight=recency_weight,
+            engagement_weight=engagement_weight
+        )
 
     posts.sort(key=lambda x: scores.get(str(x.get('id')), 0.0), reverse=True)
     return posts
@@ -610,12 +628,12 @@ class FeedView(APIView):
 
             # Get the correct ratios based on user type
             ratios = self.get_feed_ratios(current_user_profile)
-            CANDIDATE_POOL_SIZE = 100 
+            CANDIDATE_POOL_SIZE = 75 
             
             # --- Fetch a Large Pool of Candidate Posts for Randomization ---
             followed_posts_candidates = []
             for chunk in chunk_list(following_user_ids):
-                followed_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
+                followed_posts_query = db.collection('posts').where('author_id', 'in', chunk).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(CANDIDATE_POOL_SIZE)
                 for doc in followed_posts_query.stream():
                     post_data = doc.to_dict()
                     post_data['id'] = doc.id
@@ -636,7 +654,7 @@ class FeedView(APIView):
                 )
                 # print(f"Shared relations user IDs before limit: {shared_relations_users_ids}")
                 for chunk in chunk_list([str(uid) for uid in shared_relations_users_ids]):
-                    relations_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
+                    relations_posts_query = db.collection('posts').where('author_id', 'in', chunk).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(CANDIDATE_POOL_SIZE)
                     for doc in relations_posts_query.stream():
                         post_data = doc.to_dict()
                         post_data['id'] = doc.id
@@ -654,7 +672,7 @@ class FeedView(APIView):
 
             not_followed_no_relations_candidates = []
             for chunk in chunk_list([str(uid) for uid in all_other_user_ids]):
-                other_posts_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
+                other_posts_query = db.collection('posts').where('author_id', 'in', chunk).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(CANDIDATE_POOL_SIZE)
                 for doc in other_posts_query.stream():
                     post_data = doc.to_dict()
                     post_data['id'] = doc.id
@@ -664,7 +682,7 @@ class FeedView(APIView):
 
             org_followed_candidates = []
             for chunk in chunk_list(following_org_ids):
-                org_followed_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
+                org_followed_query = db.collection('posts').where('author_id', 'in', chunk).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(CANDIDATE_POOL_SIZE)
                 for doc in org_followed_query.stream():
                     post_data = doc.to_dict()
                     post_data['id'] = doc.id
@@ -676,7 +694,7 @@ class FeedView(APIView):
             non_exclusive_org_ids = list(Organization.objects.filter(exclusive=False).exclude(user__id__in=[int(uid) for uid in following_org_ids]).values_list('user_id', flat=True))
             org_not_exclusive_candidates = []
             for chunk in chunk_list([str(uid) for uid in non_exclusive_org_ids]):
-                org_not_exclusive_query = db.collection('posts').where('author_id', 'in', chunk).limit(CANDIDATE_POOL_SIZE)
+                org_not_exclusive_query = db.collection('posts').where('author_id', 'in', chunk).order_by('timestamp', direction=firestore.Query.DESCENDING).limit(CANDIDATE_POOL_SIZE)
                 for doc in org_not_exclusive_query.stream():
                     post_data = doc.to_dict()
                     post_data['id'] = doc.id
@@ -706,23 +724,15 @@ class FeedView(APIView):
                 logger.info("Falling back to a hybrid general feed. ")
 
                 # Fetches a pool of recent posts
-                recent_posts_query = db.collection('posts').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(int(CANDIDATE_POOL_SIZE // 3))
+                recent_posts_query = db.collection('posts').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(int(CANDIDATE_POOL_SIZE // 2))
                 recent_posts = []
                 for doc in recent_posts_query.stream():
                     post_data = doc.to_dict()
                     post_data['id'] = doc.id
                     recent_posts.append(post_data)
 
-                # Fetches a pool of popular posts (e.g., by like count)
-                popular_posts_query = db.collection('posts').order_by('like_count', direction=firestore.Query.DESCENDING).limit(int(CANDIDATE_POOL_SIZE // 3))
-                popular_posts = []
-                for doc in popular_posts_query.stream():
-                    post_data = doc.to_dict()
-                    post_data['id'] = doc.id
-                    popular_posts.append(post_data)
-
                 # Fetches a pool of popular posts (e.g., by view count)
-                viewed_posts_query = db.collection('posts').order_by('view_count', direction=firestore.Query.DESCENDING).limit(int(CANDIDATE_POOL_SIZE // 3))
+                viewed_posts_query = db.collection('posts').order_by('view_count', direction=firestore.Query.DESCENDING).limit(int(CANDIDATE_POOL_SIZE // 2))
                 viewed_posts = []
                 for doc in viewed_posts_query.stream():
                     post_data = doc.to_dict()
@@ -730,7 +740,7 @@ class FeedView(APIView):
                     viewed_posts.append(post_data)
 
                 # Combine the pools and remove duplicates
-                combined_posts = recent_posts + popular_posts + viewed_posts
+                combined_posts = recent_posts + viewed_posts
                 seen_ids = set()
                 hybrid_feed_candidates = []
                 for post in combined_posts:
@@ -740,8 +750,8 @@ class FeedView(APIView):
                 
                 full_feed_list = hybrid_feed_candidates
 
-            # Deterministic, session-scored ordering with slight recency bias
-            session_sort_posts(full_feed_list, session_id, recency_weight=0.12)
+            # Deterministic, session-scored ordering with recency and engagement bias
+            session_sort_posts(full_feed_list, session_id, recency_weight=0.7, engagement_weight=0.15)
 
             # print(f"Full feed list count after shuffle: {len(full_feed_list)}")
 
