@@ -1,20 +1,6 @@
-"""varsigram URL Configuration
-
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/3.2/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
-"""
 from django.contrib import admin
 from django.urls import path, include
+from django.http import JsonResponse
 from users import urls as users_urls
 from chat import urls as chat_urls
 from postMang import urls as post_urls
@@ -25,13 +11,28 @@ from rest_framework_simplejwt.views import (
     TokenVerifyView, # Optional: only if you need an endpoint to verify token validity
 )
 from users.views import CustomTokenObtainPairView, LogoutAndBlacklistRefreshToken
+import os
 # from users.views import (
     # GoogleLoginApi,
     # GoogleLoginRedirectApi,
 # )
 
+def assetlinks(request):
+    return JsonResponse([
+        {
+            "relation": ["delegate_permission/common.handle_all_urls"],
+            "target": {
+            "namespace": "android_app",
+            "package_name": "com.varsigram.app",
+            "sha256_cert_fingerprints":
+                [os.getenv('ASSETLINKS_SHA256_FINGERPRINT')]
+            }
+        }
+    ], safe=False)
+
 urlpatterns = [
     path('admin/', admin.site.urls, name='admin_urls'),
+    path('.well-known/assetlinks.json', assetlinks),
     path('api-auth/', include('rest_framework.urls', namespace='rest_framework_endpoints')),
     path('api/v1/', include(users_urls, namespace='users_api')),
     path('api/v1/', include(chat_urls, namespace='chat_api')),
